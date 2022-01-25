@@ -228,6 +228,7 @@ class paytrail
 		$html .= '<div id="provider-group-switcher">
 		';
 		// Apple Pay Button
+		if ($decodedresponsebody->customProviders->applepay->parameters > 0){
 		$html .= '<div id="apple-pay-button">
 		';		
 		foreach ($decodedresponsebody->customProviders->applepay->parameters as $param) {
@@ -235,7 +236,8 @@ class paytrail
 		';	
 		}
 		$html .= '</div>
-		';		
+		';	
+		}	
 		// Provider payment group name, icon and id 	
 		foreach ($decodedresponsebody->groups as $group) {
 		$groups[] = [
@@ -375,6 +377,7 @@ class paytrail
 	
 	function get_error()
 	{
+
 		global $_GET;
 		$error = array('title' => MODULE_PAYMENT_PAYTRAIL_HEADER_ERROR,
 				'error' => MODULE_PAYMENT_PAYTRAIL_TEXT_ERROR);
@@ -838,6 +841,7 @@ class paytrail
 			
 			// if tax is to be calculated on purchased GVs, calculate it
             $items[] = array(
+
                 'title' => MODULE_PAYMENT_PAYTRAIL_GIFT_TEXT,
                 'code' => $gv_order_amount,
                 'qty' => -1,
