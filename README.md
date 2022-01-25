@@ -27,3 +27,5 @@ Myös maksupalvelumme yhdistyvät yhdeksi kokonaisuudeksi, uudeksi Paytrailiksi,
 2. Lasku- ja osamaksupalvelut: Walley, OP Lasku ja Jousto
 3. Korttimaksaminen: Visa, Mastercard ja American Express
 4. Mobiilimaksaminen: MobilePay, Pivo, Siirto ja Apple Pay
+
+**Apple Pay ei tarkistettu**
