@@ -29,7 +29,7 @@ class paytrail
 {
 	var $code, $title, $description, $enabled, $sort_order;
 	private $allowed_currencies = array('EUR');	
-	public $moduleVersion = '3.2';
+	public $moduleVersion = '3.4';
 	protected $PaytrailApiVersion = '1.57';	
 	
 	function __construct()	
@@ -482,12 +482,12 @@ class paytrail
 	
     protected function calculateHmac($params = [], $body = '')
     {
-        return Signature::calculateHmac($params, $body, $this->privateKey);
+        return SignaturePyt::calculateHmac($params, $body, $this->privateKey);
     }
 
     public function validateHmac($response = [], $body = '', $signature = '')
     {
-        Signature::validateHmac($response, $body, $signature, $this->privateKey);
+        SignaturePyt::validateHmac($response, $body, $signature, $this->privateKey);
     }
 	
     public function getOrderItems($order)
@@ -891,7 +891,7 @@ class paytrail
 } // end class paytrail
 
 // This class is Paytrail module signature
-class Signature
+class SignaturePyt
 {
     public static function calculateHmac($params = [], $body = '', $privateKey = '')
     {
