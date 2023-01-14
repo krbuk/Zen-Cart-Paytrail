@@ -26,6 +26,7 @@ define('MODULE_PAYMENT_PAYTRAIL_PAYMENT_OK', '[Payment completed] ');
 define('MODULE_PAYMENT_PAYTRAIL_PAYMENT_FAIL', '[Payment status canceled] ');
 define('MODULE_PAYMENT_PAYTRAIL_PAYMENT_PENDING', '[Payment is not yet completed] ');
 define('MODULE_PAYMENT_PAYTRAIL_PAYMENT_DELAYED', '[Payment completed, requires approval on the Paytrail Merchant Panel!] ');
+define('MODULE_PAYMENT_PAYTRAIL_PAYMENT_NEW', '[Payment has been created but nothing more] ');
 define('MODULE_PAYMENT_PAYTRAIL_ORDER_NUMBER', 'Order number : ');
 define('MODULE_PAYMENT_PAYTRAIL_PAYMENT_AUTHRORIZED', 'Payment verified.');
 define('MODULE_PAYMENT_PAYTRAIL_PAYMENT_SETTLED', 'Payment charged.');

@@ -26,6 +26,7 @@ define('MODULE_PAYMENT_PAYTRAIL_PAYMENT_OK', '[Maksu suoritettu] ');
 define('MODULE_PAYMENT_PAYTRAIL_PAYMENT_FAIL', '[Maksun tila peruttu] ');
 define('MODULE_PAYMENT_PAYTRAIL_PAYMENT_PENDING', '[Maksu ei vielä suoritettu] ');
 define('MODULE_PAYMENT_PAYTRAIL_PAYMENT_DELAYED', '[Maksu suoritettu, vaatii hyväksynnän Paytrail kauppiaspaneeli!] ');
+define('MODULE_PAYMENT_PAYTRAIL_PAYMENT_NEW', '[Maksu on luotu, mutta ei mitään muuta] ');
 define('MODULE_PAYMENT_PAYTRAIL_ORDER_NUMBER', 'Tilausnumero : ');
 define('MODULE_PAYMENT_PAYTRAIL_PAYMENT_AUTHRORIZED', 'Maksu varmennettu.');
 define('MODULE_PAYMENT_PAYTRAIL_PAYMENT_SETTLED', 'Maksu veloitettu.');
