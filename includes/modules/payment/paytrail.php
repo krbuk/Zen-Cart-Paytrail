@@ -4,7 +4,7 @@
  *
  * Use Guzzle HTTP client v6 installed with Composer https://github.com/guzzle/guzzle/
  *
- * REQUIRES PHP version >= 7.3
+ * REQUIRES PHP version >= 7.4
  * 
  * Use Guzzle HTTP client v6 installed with Composer https://github.com/guzzle/guzzle/
  * We recommend using Guzzle HTTP client through composer as default HTTP client for PHP because it has
@@ -14,7 +14,7 @@
  * @package payment
  * @copyright Copyright 2003-2019 Zen Cart Development Team
  * @license http://www.zen-cart.com/license/2_0.txt GNU Public License V2.0
- * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2022 Sep 1 Modified in v1.5.7 $
+ * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2022 Sep 1 Modified in v1.5.7c $
  */
 use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\Psr7\Uri;
@@ -29,8 +29,8 @@ class paytrail
 {
 	var $code, $title, $description, $enabled, $sort_order;
 	private $allowed_currencies = array('EUR');	
-	public $moduleVersion = '3.4';
-	protected $PaytrailApiVersion = '1.57';	
+	public $moduleVersion = '3.5';
+	protected $PaytrailApiVersion = '1.57c';	
 	
 	function __construct()	
 	{
@@ -40,7 +40,7 @@ class paytrail
 		$this->description = '<strong>Paytrail version -v' . $this->moduleVersion . '</strong><br><br>' .MODULE_PAYMENT_PAYTRAIL_TEXT_DESCRIPTION;
 		$this->enabled  = (defined('MODULE_PAYMENT_PAYTRAIL_STATUS') && MODULE_PAYMENT_PAYTRAIL_STATUS == 'Kyllä') ? true : false;		
 		$this->sort_order = defined('MODULE_PAYMENT_PAYTRAIL_SORT_ORDER') ? MODULE_PAYMENT_PAYTRAIL_SORT_ORDER : null;
-		$this->form_action_url = "https://services.paytrail.com/payments/";
+		$this->form_action_url = "https://services.paytrail.com/payments";
 		$this->merchantId = defined('MODULE_PAYMENT_PAYTRAIL_KAUPPIAS') ? MODULE_PAYMENT_PAYTRAIL_KAUPPIAS : null;
 		$this->privateKey = defined('MODULE_PAYMENT_PAYTRAIL_TURVA_AVAIN') ? MODULE_PAYMENT_PAYTRAIL_TURVA_AVAIN : null;			
 		$this->shop_in_shop_merchant_id = defined('MODULE_PAYMENT_PAYTRAIL_PAAMYYJA') ? MODULE_PAYMENT_PAYTRAIL_PAAMYYJA : null;
@@ -132,7 +132,7 @@ class paytrail
 		$amount = number_format($order->info['total'], 2, '.', '')*100;
 		$this->amount = intval($amount);
 		// ********************************
-		// ***       Paytaril           ***
+		// ***       Paytrail           ***
 		// ********************************		
 		$headers = $this->getHeaders('POST');
 		$body = $this->getBody();
@@ -166,12 +166,13 @@ class paytrail
 			/**
 			**	 Error control	
 			**   Erase " // " and check to sending request data.
-			**/			
+			**/	
+			//echo "\n\nRequest ID: {$response->getHeader('cof-request-id')[0]}\n\n";
 			//echo '<br>' .'Request ID: ' .$response->getHeader('request-id')[0];
 			//echo '<br>' .(json_encode(json_decode($responseBody), JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES));
 		    //echo '<pre>'; print_r(json_decode($body,true)); exit;
 		}
-		
+
 		// Starting active payment icon
 		$html  = "</form>\n";
 		$html .='<style>		
@@ -200,20 +201,20 @@ class paytrail
 		';
 		$html .='<script src="https://services.paytrail.com/static/paytrail.js"></script>
 		';		
-		$html .='
+		$html .="
 		<script>
 		const applePayButton = checkoutFinland.applePayButton;
 		// canMakePayment() checks that the user is on a Safari browser which supports Apple Pay.
 		if (applePayButton.canMakePayment()) {
 		  // Mount the button to the element you created earlier, here e.g. #apple-pay-button.
-		  applePayButton.mount("#apple-pay-button", (redirectUrl) => {
+		  applePayButton.mount('#apple-pay-button', (redirectUrl) => {
 			setTimeout(() => {
 			  window.location.replace(redirectUrl);
 			}, 1500);
 		  });
 		}		
 		</script>
-		';		
+		";		
 		// Provider payment group title	
 		$group_titles = [
 			'mobile'     => 'Mobile payment methods',
@@ -307,6 +308,10 @@ class paytrail
 
 	function before_process()
 	{
+		if (empty($_GET['checkout-status']))				
+			{	
+				zen_redirect(zen_href_link(FILENAME_CHECKOUT_PAYMENT, '', 'SSL', true, false));				
+			}		
 		return false;
 	}
 
@@ -315,6 +320,7 @@ class paytrail
 		global  $messageStack, $insert_id, $db; 
 		$transaction_id = $this->transactionId;
 		$payment_status = array(
+			'new'		=> MODULE_PAYMENT_PAYTRAIL_PAYMENT_NEW,
 			'fail' 		=> MODULE_PAYMENT_PAYTRAIL_PAYMENT_FAIL, 
 			'ok' 		=> MODULE_PAYMENT_PAYTRAIL_PAYMENT_OK, 
 			'pending'	=> MODULE_PAYMENT_PAYTRAIL_PAYMENT_PENDING, 
@@ -323,26 +329,32 @@ class paytrail
 		
 		if ($transaction_id == $response['checkout-transaction-id'])
 		{
-			if ($_GET['checkout-status'] == 'fail' || $_GET['checkout-status'] == 'pending' || $_GET['checkout-status'] == 'delayed')				
+			if ($_GET['checkout-status'] == 'new' || 
+				$_GET['checkout-status'] == 'fail' || 
+				$_GET['checkout-status'] == 'pending' || 
+				$_GET['checkout-status'] == 'delayed')				
 			{
 				$error_message = MODULE_PAYMENT_PAYTRAIL_PAYMENT_ERROR;
 				zen_redirect(zen_href_link(FILENAME_CHECKOUT_PAYMENT, '', 'SSL', true, false));	
 				$messageStack->add_session('checkout_payment', $error_message, 'error');				
 			}
 			
-			if ($_GET['checkout-status'] == 'ok')				
+			else if ($_GET['checkout-status'] == 'ok')				
 			{
 				// Update order history
 				$comments = zen_db_prepare_input(MODULE_PAYMENT_PAYTRAIL_TITLE_STATUS .$payment_status[$_GET['checkout-status']] .MODULE_PAYMENT_PAYTRAIL_PAYMENT_METHOD .$_GET['checkout-provider'] . " , " .MODULE_PAYMENT_PAYTRAIL_REFERENCE_NUMBER .$_GET['checkout-reference'] . ".");
-			
+				
 				$db->Execute("update " . TABLE_ORDERS_STATUS_HISTORY . " set comments = CONCAT(comments, '" . zen_db_input($comments) . "') where orders_id = '" . $insert_id . "'");
-			
 			}
 			else
 			{
-				die( MODULE_PAYMENT_PAYTRAIL_TEXT_ERROR );
+				zen_redirect(zen_href_link(FILENAME_CHECKOUT_PAYMENT, '', 'SSL', true, false));
 			}			
-		}	
+		}
+		else
+			{
+				zen_redirect(zen_href_link(FILENAME_CHECKOUT_PAYMENT, '', 'SSL', true, false));
+			}		
 } // end after_process			
 
 	function install()
@@ -377,7 +389,6 @@ class paytrail
 	
 	function get_error()
 	{
-
 		global $_GET;
 		$error = array('title' => MODULE_PAYMENT_PAYTRAIL_HEADER_ERROR,
 				'error' => MODULE_PAYMENT_PAYTRAIL_TEXT_ERROR);
@@ -841,7 +852,6 @@ class paytrail
 			
 			// if tax is to be calculated on purchased GVs, calculate it
             $items[] = array(
-
                 'title' => MODULE_PAYMENT_PAYTRAIL_GIFT_TEXT,
                 'code' => $gv_order_amount,
                 'qty' => -1,
