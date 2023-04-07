@@ -29,7 +29,7 @@ class paytrail
 {
 	var $code, $title, $description, $enabled, $sort_order;
 	private $allowed_currencies = array('EUR');	
-	public $moduleVersion = '3.5';
+	public $moduleVersion = '4.0';
 	protected $PaytrailApiVersion = '1.57c';	
 	
 	function __construct()	
@@ -75,6 +75,7 @@ class paytrail
     function update_status()
     {
 		global $order; $zones_to_geo_zones; 
+		
 		//Only EUR orders accepted
 		$currency = $order->info['currency'];
 		if(!(in_array($currency, $this->allowed_currencies)))
@@ -115,18 +116,11 @@ class paytrail
 	{
 		global $order, $currencies, $db, $order_totals;
 		
-		//Create a randomized order number and order stamp
+		//Create a randomized order number and order stamp'
 		$number_rand = time().rand(1,9);
-		
 		$order_number = str_pad($number_rand, 12, "1", STR_PAD_RIGHT);
 		$this->order_number = $order_number;
-		
-		$order_stamp  = str_pad($number_rand, 12, "7",  STR_PAD_LEFT);
-		$this->order_stamp  = $order_stamp;
-		
-		$item_stamp = str_pad($number_rand, 12, "2", STR_PAD_RIGHT);
-		$this->items_stamp = $item_stamp;
-		
+	
 		// Order amount
 		$decimals = $currencies->get_decimal_places($_SESSION['currency']);
 		$amount = number_format($order->info['total'], 2, '.', '')*100;
@@ -167,15 +161,15 @@ class paytrail
 			**	 Error control	
 			**   Erase " // " and check to sending request data.
 			**/	
-			//echo "\n\nRequest ID: {$response->getHeader('cof-request-id')[0]}\n\n";
-			//echo '<br>' .'Request ID: ' .$response->getHeader('request-id')[0];
-			//echo '<br>' .(json_encode(json_decode($responseBody), JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES));
-		    //echo '<pre>'; print_r(json_decode($body,true)); exit;
+//			echo "\n\nRequest ID: {$response->getHeader('cof-request-id')[0]}\n\n";
+//			echo '<br>' .'Request ID: ' .$response->getHeader('request-id')[0];
+//			echo '<br>' .(json_encode(json_decode($responseBody), JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES));
+//		    echo '<br><pre>'; print_r(json_decode($body,true)); exit;
 		}
-
 		// Starting active payment icon
 		$html  = "</form>\n";
-		$html .='<style>		
+		$html .='
+		<style>		
 		#provider-group-switcher 
 		{ 
 			width: 100%; 
@@ -193,28 +187,28 @@ class paytrail
 			-apple-pay-button-type: plain;
 			-apple-pay-button-style: white-outline;
 			height: 50px;
-			width: 100%;
+			width: 30%;
 	    }		
 		#btn_submit, .buttonRow  { display: none; } /*Submit button hidden */
 		.btn-success { display: none; } /*Submit button hidden */
 		</style>	
 		';
 		$html .='<script src="https://services.paytrail.com/static/paytrail.js"></script>
+		';
+		$html .='
+			<script>
+			const applePayButton = checkoutFinland.applePayButton;
+			// canMakePayment() checks that the user is on a Safari browser which supports Apple Pay.
+			if (applePayButton.canMakePayment()) {
+			  // Mount the button to the element you created earlier, here e.g. #apple-pay-button.
+			  applePayButton.mount("#apple-pay-button", (redirectUrl) => {
+				setTimeout(() => {
+				  window.location.replace(redirectUrl);
+				}, 1500);
+			  });
+			}		
+			</script>
 		';		
-		$html .="
-		<script>
-		const applePayButton = checkoutFinland.applePayButton;
-		// canMakePayment() checks that the user is on a Safari browser which supports Apple Pay.
-		if (applePayButton.canMakePayment()) {
-		  // Mount the button to the element you created earlier, here e.g. #apple-pay-button.
-		  applePayButton.mount('#apple-pay-button', (redirectUrl) => {
-			setTimeout(() => {
-			  window.location.replace(redirectUrl);
-			}, 1500);
-		  });
-		}		
-		</script>
-		";		
 		// Provider payment group title	
 		$group_titles = [
 			'mobile'     => 'Mobile payment methods',
@@ -226,67 +220,69 @@ class paytrail
 		$html .= '<section class="payment-providers"><h2>' .MODULE_PAYMENT_PAYTRAIL_SELECET_PAYMENT .'</h2>
 		';
 		$html .= $decodedresponsebody->terms;	
-		$html .= '<div id="provider-group-switcher">
+		$html .= '
+		<div id="provider-group-switcher"><br>
 		';
 		// Apple Pay Button
-		if ($decodedresponsebody->customProviders->applepay->parameters > 0){
+		if ($decodedresponsebody->customProviders->applepay->parameters > 0):
+
 		$html .= '<div id="apple-pay-button">
-		';		
-		foreach ($decodedresponsebody->customProviders->applepay->parameters as $param) {
-		$html .= '<input type="hidden" name="'.$param->name .'" value="'.$param->value .'">
 		';	
-		}
+     		foreach ($decodedresponsebody->customProviders->applepay->parameters as $parameter):
+		$html .= '<input type="hidden" name="'.$parameter->name .'" value="'.$parameter->value .'">
+		';	
+			endforeach;				
 		$html .= '</div>
-		';	
-		}	
+		';				
+		endif;
 		// Provider payment group name, icon and id 	
-		foreach ($decodedresponsebody->groups as $group) {
-		$groups[] = [
-			'id'  => $group->id,
-			'name'=> $group->name,
-			'icon'=> $group->icon,
-			'svg' => $group->svg
-		];
+		foreach ($decodedresponsebody->groups as $group) 
+		{
+			$groups[] = [
+				'id'  => $group->id,
+				'name'=> $group->name,
+				'icon'=> $group->icon,
+				'svg' => $group->svg
+			];
 		$html .= '<div style="clear: both"></div>';	
-		$html .= '<h3 class="provider-group-header">
+		$html .= '
+		<h3 class="provider-group-header">
 		<img src="' . $group->icon .'" alt="'. $group->name .'" title="'. $group->name.'" style="width:22px; float:left; margin-bottom: 10px;">' .$group->name .'</h3>
 		';
-			
 		// Provider name 
-		foreach ($decodedresponsebody->providers  as $providersmethods) {
-		$allPovidersMethods[] = [
-			'url'	=>	$providersmethods->url,
-			'icon'	=>	$providersmethods->icon,
-			'svg'	=>	$providersmethods->svg,
-			'name'	=>	$providersmethods->name,
-			'group'	=>	$providersmethods->group,
-			'id'	=>	$providersmethods->id,
-			'parameters' => $providersmethods->parameters
-		];	
-			
-			
+		foreach ($decodedresponsebody->providers  as $providersmethods) 
+		{
+			$allPovidersMethods[] = [
+				'url'	=>	$providersmethods->url,
+				'icon'	=>	$providersmethods->icon,
+				'svg'	=>	$providersmethods->svg,
+				'name'	=>	$providersmethods->name,
+				'group'	=>	$providersmethods->group,
+				'id'	=>	$providersmethods->id,
+				'parameters' => $providersmethods->parameters
+			];	
 		// Selected provider id and group 
-		if ($group->id == $providersmethods->group){	
+		if ($group->id == $providersmethods->group)
+		{	
 		$html .= '<div class="provider-group">
 		';
 		$html .= '<form action="' .$providersmethods->url .'" method="POST">
 		';
-	
 		// Provider form filesds
-        foreach ($providersmethods->parameters as $parameter) {
-		$formFields[] = [
-			'name'	=> $parameter->name,
-			'value'	=> $parameter->value,			
-				];
+        foreach ($providersmethods->parameters as $parameter) 
+		{
+			$formFields[] = [
+				'name'	=> $parameter->name,
+				'value'	=> $parameter->value,			
+					];
 		$html .= '<input type="hidden" name="'.$parameter->name .'" value="'.$parameter->value .'">
 		';			
 		} // end provider form filesds	
-
 		$html .= '<button class="provider-button">
 		';
 		$html .= '<div class="button-content">
 		';
-		$html .= '<img src="'.$providersmethods->icon .'" alt="'.$providersmethods->id .'" title="'.$providersmethods->id .'">
+		$html .= '<img src="'.$providersmethods->icon .'" alt="'.$providersmethods->id .'" title="'.$providersmethods->id .'" style="width:140px; height:75px;>"
 		';
 		$html .= '</div>
 		';
@@ -410,7 +406,7 @@ class paytrail
 
         $body = json_encode(
             [
-				'stamp' => $this->order_stamp,
+				'stamp' => $this->generate_uuid(),
                 'reference' => $this->order_number,
                 'amount' => $this->amount,
                 'currency' => $this->currency,
@@ -477,6 +473,7 @@ class paytrail
             'checkout-algorithm' => 'sha256',
             'checkout-method'    => strtoupper($method),
             'checkout-nonce'     => uniqid(true),
+
             'checkout-timestamp' => $datetime->format('Y-m-d\TH:i:s.u\Z'),
             'platform-name'		 => 'zencart- '. $this->PaytrailApiVersion,
             'content-type'       => 'application/json; charset=utf-8',
@@ -518,7 +515,7 @@ class paytrail
 				'vatPercentage' => $item['vat'],
                 'deliveryDate'	=> date('Y-m-d'),
 				'merchant'		=> $this->merchantId,
-				'stamp'			=> $this->items_stamp,
+				'stamp'			=> $this->generate_uuid(),
 				'reference'		=> $this->order_number,
             );				
 
@@ -535,7 +532,7 @@ class paytrail
 				'vatPercentage' => $item['vat'],
                 'deliveryDate'	=> date('Y-m-d'),
 				'merchant'		=> $this->shop_in_shop_merchant_id,
-				'stamp'			=> rand(1,9999) .'-' .$this->items_stamp,				
+				'stamp'			=> $this->generate_uuid(),				
 				'reference'		=> $this->order_number,
 				'commission'	=> [
 					'merchant'	=> $this->shop_in_shop_merchant_id,
@@ -902,6 +899,18 @@ class paytrail
 			}
         return $items;
     } // end itemArgs($order)
+	
+	// Stamp random trans id
+    public function generate_uuid() {
+		return sprintf( '%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
+			mt_rand( 0, 0xffff ), mt_rand( 0, 0xffff ),
+			mt_rand( 0, 0xffff ),
+			mt_rand( 0, 0x0C2f ) | 0x4000,
+			mt_rand( 0, 0x3fff ) | 0x8000,
+			mt_rand( 0, 0x2Aff ), mt_rand( 0, 0xffD3 ), mt_rand( 0, 0xff4B )
+		);
+	}		
+	
 } // end class paytrail
 
 // This class is Paytrail module signature
