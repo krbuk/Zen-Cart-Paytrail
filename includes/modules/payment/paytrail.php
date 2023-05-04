@@ -29,7 +29,7 @@ class paytrail
 {
 	var $code, $title, $description, $enabled, $sort_order;
 	private $allowed_currencies = array('EUR');	
-	public $moduleVersion = '4.0';
+	public $moduleVersion = '4.1';
 	protected $PaytrailApiVersion = '1.57c';	
 	
 	function __construct()	
@@ -609,7 +609,7 @@ class paytrail
                 'title' => $order->info['shipping_method'], 
                 'code' =>  $order->info['shipping_module_code'].'',
                 'qty' => 1,
-                'price' => intval($shipping_price),
+                'price' => round($shipping_price),
                 'vat' => round(floatval($shipping_tax)),
                 'discount' => 0,
                 'type' => 2,
@@ -878,11 +878,13 @@ class paytrail
 
 		// Add sumround breakdown
 		if ($this->amount <> $total_check)  {
-			if ($this->amount > $total_check)  {
+			if ($this->amount > $total_check)  
+			{
 				$sum_round_count = $this->amount - $total_check;
 				$qty = 1;
 		    }
-            else if ($total_check > $this->amount)  {
+            if ($total_check > $this->amount)  
+			{
 				$sum_round_count = $total_check - $this->amount;
 				$qty = -1;
 		    }
