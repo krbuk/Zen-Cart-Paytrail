@@ -5,10 +5,11 @@ Always perform a backup of your database and source code before installing any p
 To use this extension, you need to sign up for a Paytrail account. 
 Before account activation use test mode if Okay call to Paytrail customer service and ask to account activations.
 
-Paytrail on suomalainen verkkomaksuyhtiö. Vastaamme yli 20 000 asiakkaamme verkkomaksuliikenteestä.
+Paytrail is a Finnish online payment company. 
 
-1. Pankkimaksut: Nordea, Osuuspankki, Danske Bank, Säästöpankki, Oma Säästöpankki, POP Pankki, Aktia, Handelsbanken, Ålandsbanken ja S-Pankki
-2. Lasku- ja osamaksupalvelut: Alisa Yrityslasku, Walley, OP Lasku ja OP Tililuotto
-3. Korttimaksaminen: Visa, Mastercard ja American Express
-4. Mobiilimaksaminen: MobilePay, Pivo, Siirto ja Apple Pay
-5. PayPal: Toimii omalla sopimuksella
+1. Online banks: Nordea, Osuuspankki, Danske Bank, Säästöpankki, Oma Säästöpankki, POP Pankki, Aktia, Handelsbanken, Ålandsbanken ja S-Pankki
+2. Buy now, Pay later: Alisa Yrityslasku, Walley, OP Lasku ja OP Tililuotto
+3. Cards: Visa, Mastercard ja American Express
+4. Mobile: MobilePay, Pivo, Siirto ja Apple Pay
+5. PayPal: Available using your own agreement
+6. ** American Express is available only to businesses registered in Finland.**
