@@ -17,11 +17,3 @@ Before account activation use test mode if Okay call to Paytrail customer servic
  * @license http://www.zen-cart.com/license/2_0.txt GNU Public License V2.0
  * @version $Id: Nida Verkkopalvelu (www.nida.fi) / Krbuk 2024 Apr 24 Modified in v1.5.7c
  
- 
-Paytrail on suomalainen verkkomaksuyhtiö. Vastaamme yli 20 000 asiakkaamme verkkomaksuliikenteestä.
-
-1. Pankkimaksut: Nordea, Osuuspankki, Danske Bank, Säästöpankki, Oma Säästöpankki, POP Pankki, Aktia, Handelsbanken, Ålandsbanken ja S-Pankki
-2. Lasku- ja osamaksupalvelut: Alisa Yrityslasku, Walley, OP Lasku ja OP Tililuotto
-3. Korttimaksaminen: Visa, Mastercard ja American Express
-4. Mobiilimaksaminen: MobilePay, Pivo, Siirto ja Apple Pay
-5. PayPal: Toimii omalla sopimuksella
