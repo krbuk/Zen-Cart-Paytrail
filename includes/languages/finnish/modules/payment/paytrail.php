@@ -20,7 +20,8 @@ define('MODULE_PAYMENT_PAYTRAIL_SELECET_PAYMENT', 'Valitse maksutapa');
 define('MODULE_PAYMENT_PAYTRAIL_TITLE_STATUS', 'Paytrail -maksun tila : '); 
 define('MODULE_PAYMENT_PAYTRAIL_PAYMENT_METHOD', 'Maksutapa : ');
 define('MODULE_PAYMENT_PAYTRAIL_REFERENCE_NUMBER', 'Viitenumero : ');
-define('MODULE_PAYMENT_PAYTRAIL_PAYMENT_ERROR', 'Virhe! Soita asiakaspalvelun');
+define('MODULE_PAYMENT_PAYTRAIL_PAYMENT_ERROR', 'Virhe! Paytrail verkkomaksupalvelu ei vastaa. ');
+define('MODULE_PAYMENT_PAYTRAIL_SELECET_OTHER', 'Kilikka takaisin nappi ja valitse muu maksutapa');
 // Payment information
 define('MODULE_PAYMENT_PAYTRAIL_PAYMENT_OK', '[Maksu suoritettu] ');
 define('MODULE_PAYMENT_PAYTRAIL_PAYMENT_FAIL', '[Maksun tila peruttu] ');

@@ -20,7 +20,8 @@ define('MODULE_PAYMENT_PAYTRAIL_SELECET_PAYMENT', 'Choose payment method');
 define('MODULE_PAYMENT_PAYTRAIL_TITLE_STATUS', 'Paytrail payment status : '); 
 define('MODULE_PAYMENT_PAYTRAIL_PAYMENT_METHOD', 'Payment method : ');
 define('MODULE_PAYMENT_PAYTRAIL_REFERENCE_NUMBER', 'Reference Number : ');
-define('MODULE_PAYMENT_PAYTRAIL_PAYMENT_ERROR', 'ERROR ! Call customer service');
+define('MODULE_PAYMENT_PAYTRAIL_PAYMENT_ERROR', 'ERROR ! Paytrail online payment service does not respond.');
+define('MODULE_PAYMENT_PAYTRAIL_SELECET_OTHER', 'Kilikka takaisin nappi ja valitse muu maksutapa');
 // Payment information
 define('MODULE_PAYMENT_PAYTRAIL_PAYMENT_OK', '[Payment completed] ');
 define('MODULE_PAYMENT_PAYTRAIL_PAYMENT_FAIL', '[Payment status canceled] ');
