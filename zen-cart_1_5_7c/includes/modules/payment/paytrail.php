@@ -29,7 +29,7 @@ class paytrail
 {
   var $code, $title, $description, $enabled, $sort_order;
   private $allowed_currencies = array('EUR');	
-  public $moduleVersion = '4.5';
+  public $moduleVersion = '4.6';
   protected $PaytrailApiVersion = '1.57c';	
 	
   function __construct()	
@@ -531,9 +531,9 @@ public function getOrderItems($order)
     {
       $items[] = array('description'  => $item['title'],
                        'productCode'  => $item['code'],	
-                       'units'        => $item['qty'],				
+                       'units'        => intval($item['qty']),				
                        'unitPrice'    => intval($item['price']),
-                       'vatPercentage'=> $item['vat'],
+                       'vatPercentage'=> floatval($item['vat']),
                        'deliveryDate' => date('Y-m-d'),
                        'merchant'     => $this->merchantId,
                        'stamp'        => $this->generate_uuid(),
@@ -550,9 +550,9 @@ public function getOrderItems($order)
     {
       $items[] = array('description'  => $item['title'],
                        'productCode'  => $item['code'],	
-                       'units'        => $item['qty'],				
+                       'units'        => intval($item['qty']),			
                        'unitPrice'    => intval($item['price']),
-                       'vatPercentage'=> $item['vat'],
+                       'vatPercentage'=> floatval($item['vat']),
                        'deliveryDate' => date('Y-m-d'),
                        'merchant'     => $this->shop_in_shop_merchant_id,
                        'stamp'        => $this->generate_uuid(),				
