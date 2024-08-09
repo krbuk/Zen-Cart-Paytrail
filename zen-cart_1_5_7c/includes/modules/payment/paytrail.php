@@ -608,7 +608,7 @@ public function itemArgs($order)
                        'category' => '',
                        'qty' => floatval($item['qty']),
                        'price' => intval($item_price),
-                       'vat' => round(floatval($item_tax)),
+                       'vat' => floatval($item_tax),
                        'discount' => 0,
                        'type' => 1,
       );
