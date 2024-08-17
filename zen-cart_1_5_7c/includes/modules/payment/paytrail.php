@@ -29,7 +29,7 @@ class paytrail
 {
   var $code, $title, $description, $enabled, $sort_order;
   private $allowed_currencies = array('EUR');	
-  public $moduleVersion = '4.6';
+  public $moduleVersion = '4.8';
   protected $PaytrailApiVersion = '1.57c';	
 	
   function __construct()	
@@ -171,7 +171,8 @@ class paytrail
           **/	
           //  echo "\n\nRequest ID: {$response->getHeader('cof-request-id')[0]}\n\n";
           //  echo '<br>' .'Request ID: ' .$response->getHeader('request-id')[0];
-          //  echo '<br>' .(json_encode(json_decode($responseBody), JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES));
+		  // * Show json *
+          //   echo '<br>' .(json_encode(json_decode($responseBody), JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES));
           //  echo '<br><pre>'; print_r(json_decode($body,true)); exit;
 	}
         
@@ -531,9 +532,9 @@ public function getOrderItems($order)
     {
       $items[] = array('description'  => $item['title'],
                        'productCode'  => $item['code'],	
-                       'units'        => intval($item['qty']),				
+                       'units'        => $item['qty'],				
                        'unitPrice'    => intval($item['price']),
-                       'vatPercentage'=> floatval($item['vat']),
+                       'vatPercentage'=> $item['vat'],
                        'deliveryDate' => date('Y-m-d'),
                        'merchant'     => $this->merchantId,
                        'stamp'        => $this->generate_uuid(),
@@ -550,9 +551,9 @@ public function getOrderItems($order)
     {
       $items[] = array('description'  => $item['title'],
                        'productCode'  => $item['code'],	
-                       'units'        => intval($item['qty']),			
+                       'units'        => $item['qty'],				
                        'unitPrice'    => intval($item['price']),
-                       'vatPercentage'=> floatval($item['vat']),
+                       'vatPercentage'=> $item['vat'],
                        'deliveryDate' => date('Y-m-d'),
                        'merchant'     => $this->shop_in_shop_merchant_id,
                        'stamp'        => $this->generate_uuid(),				
@@ -608,7 +609,7 @@ public function itemArgs($order)
                        'category' => '',
                        'qty' => floatval($item['qty']),
                        'price' => intval($item_price),
-                       'vat' => floatval($item_tax),
+                       'vat' => round(floatval($item_tax)),
                        'discount' => 0,
                        'type' => 1,
       );
