@@ -14,7 +14,7 @@
  * @package payment
  * @copyright Copyright 2003-2019 Zen Cart Development Team
  * @license http://www.zen-cart.com/license/2_0.txt GNU Public License V2.0
- * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2024 Apr 20 Modified in v1.57c $
+ * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2024 Aug 28 Modified in v1.57c $
  */
 use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\Psr7\Uri;
@@ -29,7 +29,7 @@ class paytrail
 {
   var $code, $title, $description, $enabled, $sort_order;
   private $allowed_currencies = array('EUR');	
-  public $moduleVersion = '4.6';
+  public $moduleVersion = '4.7';
   protected $PaytrailApiVersion = '1.57c';	
 	
   function __construct()	
@@ -531,9 +531,9 @@ public function getOrderItems($order)
     {
       $items[] = array('description'  => $item['title'],
                        'productCode'  => $item['code'],	
-                       'units'        => intval($item['qty']),				
+                       'units'        => $item['qty'],				
                        'unitPrice'    => intval($item['price']),
-                       'vatPercentage'=> floatval($item['vat']),
+                       'vatPercentage'=> $this->yuvarla($item['vat']),
                        'deliveryDate' => date('Y-m-d'),
                        'merchant'     => $this->merchantId,
                        'stamp'        => $this->generate_uuid(),
@@ -550,9 +550,9 @@ public function getOrderItems($order)
     {
       $items[] = array('description'  => $item['title'],
                        'productCode'  => $item['code'],	
-                       'units'        => intval($item['qty']),			
+                       'units'        => $item['qty'],				
                        'unitPrice'    => intval($item['price']),
-                       'vatPercentage'=> floatval($item['vat']),
+                       'vatPercentage'=> $this->yuvarla($item['vat']),
                        'deliveryDate' => date('Y-m-d'),
                        'merchant'     => $this->shop_in_shop_merchant_id,
                        'stamp'        => $this->generate_uuid(),				
@@ -635,7 +635,7 @@ public function itemArgs($order)
                      'code' =>  $order->info['shipping_module_code'].'',
                      'qty' => 1,
                      'price' => round($shipping_price),
-                     'vat' => round(floatval($shipping_tax)),
+                     'vat' => floatval($shipping_tax),
                      'discount' => 0,
                      'type' => 2,
     );	
@@ -666,7 +666,7 @@ public function itemArgs($order)
                          'code' => '',
 			 'qty' => 1,
 			 'price' => $loworderpretax_price,
-			 'vat' => round(floatval($loworder_tax_rate)),
+			 'vat' => floatval($loworder_tax_rate),
 			 'discount' => 0,
 			 'type' => 1,
 	);
@@ -849,7 +849,7 @@ public function itemArgs($order)
                          'code' => '',
 			 'qty' => 1,
 			 'price' => $E_shipping_price,
-			 'vat' => round(floatval($E_shipping_tax)),
+			 'vat' => floatval($E_shipping_tax),
 			 'discount' => 0,
 			 'type' => 2,
 	);	
@@ -895,7 +895,7 @@ public function itemArgs($order)
   // Add reward points breakdown
   if ($_SESSION['redeem_points'] > 0) 
   {
-    $redem_value = number_format($_SESSION['redeem_points'], 2, '.', '') * 100;
+    $redem_value = number_format($_SESSION['redeem_points'], 2, '.', '');
     // if tax is to be calculated on purchased GVs, calculate it
     $items[] = array('title' => MODULE_PAYMENT_PAYTRAIL_REWARD_POINT_TEXT,
                      'code' => '',
@@ -933,6 +933,23 @@ public function itemArgs($order)
   }
   return $items;
 } // end itemArgs($order)
+	
+public function yuvarla($deger) {
+    // İlk olarak değeri 1 ondalık basamağa yuvarlıyoruz
+    $yuvarlanmisDeger = round($deger, 1);
+    
+    // Eğer sonuç 25.4 gibi bir değer ise, bunu 25.5 yapıyoruz
+    if ($yuvarlanmisDeger == floor($yuvarlanmisDeger) + 0.4) {
+        $yuvarlanmisDeger = floor($yuvarlanmisDeger) + 0.5;
+    }
+    
+    return $yuvarlanmisDeger;
+// Fonksiyonu çağırıyoruz
+//$deger = 25.442477876106;
+//$sonuc = yuvarla($deger);
+//echo $sonuc; // Sonuç: 25.5	
+}
+	
 	
 // Stamp random trans id
 public function generate_uuid() 
