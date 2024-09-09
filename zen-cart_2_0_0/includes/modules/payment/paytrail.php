@@ -5,7 +5,11 @@
  * @package payment
  * @copyright Copyright 2003-2019 Zen Cart Development Team
  * @license http://www.zen-cart.com/license/2_0.txt GNU Public License V2.0
+<<<<<<< HEAD
  * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2024 Sep 9 Modified in v2.0.0
+=======
+ * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2024 Aug 28 Modified in v2.0.0
+>>>>>>> 4fb87c874b4f313931f8e52156aae950ad04c5d0
  */
 use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\Psr7\Uri;
@@ -103,7 +107,11 @@ require DIR_FS_CATALOG .DIR_WS_CLASSES . 'vendors/paytrail/autoload.php';
     /**
      * 
      */
+<<<<<<< HEAD
     public $moduleVersion = '5.3';      
+=======
+    public $moduleVersion = '5.2';      
+>>>>>>> 4fb87c874b4f313931f8e52156aae950ad04c5d0
     /**
      * $allowed_currencies is the valid Paytrail currency to use default EUR
      * @var string
@@ -615,7 +623,11 @@ public function getOrderItems($order)
       $items[] = array(
           'unitPrice'    => intval($item['price']),
           'units'        => intval($item['qty']),
+<<<<<<< HEAD
           'vatPercentage'=> $this->custom_round($item['vat']),
+=======
+          'vatPercentage'=> $this->yuvarla($item['vat']),
+>>>>>>> 4fb87c874b4f313931f8e52156aae950ad04c5d0
           'productCode'  => $item['code'],
           'deliveryDate' => date('Y-m-d'),
           'description'  => $item['title'],
@@ -633,7 +645,11 @@ public function getOrderItems($order)
       $items[] = array(
           'unitPrice'    => intval($item['price']),
           'units'        => intval($item['qty']),
+<<<<<<< HEAD
           'vatPercentage'=> $this->custom_round($item['vat']),
+=======
+          'vatPercentage'=> $this->yuvarla($item['vat']),
+>>>>>>> 4fb87c874b4f313931f8e52156aae950ad04c5d0
           'productCode'  => $item['code'],
           'deliveryDate' => date('Y-m-d'),
           'description'  => $item['title'],
@@ -1027,6 +1043,7 @@ public function itemArgs($order)
   return $items;
 } // end itemArgs($order)
 
+<<<<<<< HEAD
 public function custom_round($number) {
     // If the number is between 25.3 and 25.7 and not 25.5
     if ($number >= 25.4 && $number < 25.7 && $number != 25.5) 
@@ -1042,6 +1059,22 @@ public function custom_round($number) {
 //echo custom_round(25.785548); // 25.5
 //echo custom_round(14.5);      // 14.5
 //echo custom_round(10.0);      // 10.0	
+=======
+public function yuvarla($deger) {
+    // İlk olarak değeri 1 ondalık basamağa yuvarlıyoruz
+    $yuvarlanmisDeger = round($deger, 1);
+    
+    // Eğer sonuç 25.4 gibi bir değer ise, bunu 25.5 yapıyoruz
+    if ($yuvarlanmisDeger == floor($yuvarlanmisDeger) + 0.4) {
+        $yuvarlanmisDeger = floor($yuvarlanmisDeger) + 0.5;
+    }
+    
+    return $yuvarlanmisDeger;
+// Fonksiyonu çağırıyoruz
+//$deger = 25.442477876106;
+//$sonuc = yuvarla($deger);
+//echo $sonuc; // Sonuç: 25.5	
+>>>>>>> 4fb87c874b4f313931f8e52156aae950ad04c5d0
 }	  
 	  
 // Stamp random trans id
@@ -1099,4 +1132,8 @@ class SignaturePyt
       }
     }
 }
+<<<<<<< HEAD
 ?>
+=======
+?>
+>>>>>>> 4fb87c874b4f313931f8e52156aae950ad04c5d0
