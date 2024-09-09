@@ -14,7 +14,7 @@
  * @package payment
  * @copyright Copyright 2003-2019 Zen Cart Development Team
  * @license http://www.zen-cart.com/license/2_0.txt GNU Public License V2.0
- * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2024 Aug 28 Modified in v1.57c $
+ * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2024 Sep 9 Modified in v1.57c $
  */
 use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\Psr7\Uri;
@@ -29,11 +29,7 @@ class paytrail
 {
   var $code, $title, $description, $enabled, $sort_order;
   private $allowed_currencies = array('EUR');	
-<<<<<<< HEAD
-  public $moduleVersion = '4.7';
-=======
-  public $moduleVersion = '4.8';
->>>>>>> 20e60801000cab62751de465cc468f266ab3c7a4
+  public $moduleVersion = '4.9';
   protected $PaytrailApiVersion = '1.57c';	
 	
   function __construct()	
@@ -175,8 +171,7 @@ class paytrail
           **/	
           //  echo "\n\nRequest ID: {$response->getHeader('cof-request-id')[0]}\n\n";
           //  echo '<br>' .'Request ID: ' .$response->getHeader('request-id')[0];
-		  // * Show json *
-          //   echo '<br>' .(json_encode(json_decode($responseBody), JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES));
+          //  echo '<br>' .(json_encode(json_decode($responseBody), JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES));
           //  echo '<br><pre>'; print_r(json_decode($body,true)); exit;
 	}
         
@@ -538,11 +533,7 @@ public function getOrderItems($order)
                        'productCode'  => $item['code'],	
                        'units'        => $item['qty'],				
                        'unitPrice'    => intval($item['price']),
-<<<<<<< HEAD
-                       'vatPercentage'=> $this->yuvarla($item['vat']),
-=======
-                       'vatPercentage'=> $item['vat'],
->>>>>>> 20e60801000cab62751de465cc468f266ab3c7a4
+                       'vatPercentage'=> $this->custom_round($item['vat']),
                        'deliveryDate' => date('Y-m-d'),
                        'merchant'     => $this->merchantId,
                        'stamp'        => $this->generate_uuid(),
@@ -561,11 +552,7 @@ public function getOrderItems($order)
                        'productCode'  => $item['code'],	
                        'units'        => $item['qty'],				
                        'unitPrice'    => intval($item['price']),
-<<<<<<< HEAD
-                       'vatPercentage'=> $this->yuvarla($item['vat']),
-=======
-                       'vatPercentage'=> $item['vat'],
->>>>>>> 20e60801000cab62751de465cc468f266ab3c7a4
+                       'vatPercentage'=> $this->custom_round($item['vat']),
                        'deliveryDate' => date('Y-m-d'),
                        'merchant'     => $this->shop_in_shop_merchant_id,
                        'stamp'        => $this->generate_uuid(),				
@@ -621,7 +608,7 @@ public function itemArgs($order)
                        'category' => '',
                        'qty' => floatval($item['qty']),
                        'price' => intval($item_price),
-                       'vat' => round(floatval($item_tax)),
+                       'vat' => floatval($item_tax),
                        'discount' => 0,
                        'type' => 1,
       );
@@ -947,23 +934,23 @@ public function itemArgs($order)
   return $items;
 } // end itemArgs($order)
 	
-public function yuvarla($deger) {
-    // İlk olarak değeri 1 ondalık basamağa yuvarlıyoruz
-    $yuvarlanmisDeger = round($deger, 1);
-    
-    // Eğer sonuç 25.4 gibi bir değer ise, bunu 25.5 yapıyoruz
-    if ($yuvarlanmisDeger == floor($yuvarlanmisDeger) + 0.4) {
-        $yuvarlanmisDeger = floor($yuvarlanmisDeger) + 0.5;
+public function custom_round($number) {
+    // If the number is between 25.3 and 25.7 and not 25.5
+    if ($number >= 25.4 && $number < 25.7 && $number != 25.5) 
+	{
+        return 25.5; // Round to 25.5
     }
-    
-    return $yuvarlanmisDeger;
-// Fonksiyonu çağırıyoruz
-//$deger = 25.442477876106;
-//$sonuc = yuvarla($deger);
-//echo $sonuc; // Sonuç: 25.5	
+   // Otherwise, return the number as is
+    return $number;
+	
+// Örnek kullanımlar
+//echo custom_round(25.442456); // 25.5
+//echo custom_round(25.778834); // 25.5
+//echo custom_round(25.785548); // 25.5
+//echo custom_round(14.5);      // 14.5
+//echo custom_round(10.0);      // 10.0	
 }
-	
-	
+
 // Stamp random trans id
 public function generate_uuid() 
 {
