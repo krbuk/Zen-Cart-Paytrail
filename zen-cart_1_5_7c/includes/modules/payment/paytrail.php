@@ -172,7 +172,7 @@ class paytrail
           //  echo "\n\nRequest ID: {$response->getHeader('cof-request-id')[0]}\n\n";
           //  echo '<br>' .'Request ID: ' .$response->getHeader('request-id')[0];
           //  echo '<br>' .(json_encode(json_decode($responseBody), JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES));
-           echo '<br><pre>'; print_r(json_decode($body,true)); exit;
+          // echo '<br><pre>'; print_r(json_decode($body,true)); exit;
 	}
         
 	// Starting active payment icon
