@@ -17,3 +17,5 @@ Before account activation use test mode if Okay call to Paytrail customer servic
  * @license http://www.zen-cart.com/license/2_0.txt GNU Public License V2.0
  * @version $Id: Nida Verkkopalvelu (www.nida.fi) / Krbuk 2024 Apr 24 Modified in v1.5.7c
  * The general VAT rate will increase from 24 percent to 25,5 percent on 01.09.2024. It now accepts decimals for VAT rates.
+ * This version is php 7.4 vs module version 4.8 last update. After this, there will be no more updates.
+ * END OF PHP 7.4 / Paytrail Zen-Cart Module 4.8 

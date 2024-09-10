@@ -14,7 +14,7 @@
  * @package payment
  * @copyright Copyright 2003-2019 Zen Cart Development Team
  * @license http://www.zen-cart.com/license/2_0.txt GNU Public License V2.0
- * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2024 Sep 9 Modified in v1.57c $
+ * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2024 Aug 28 Modified in v1.57c $
  */
 use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\Psr7\Uri;
@@ -29,7 +29,7 @@ class paytrail
 {
   var $code, $title, $description, $enabled, $sort_order;
   private $allowed_currencies = array('EUR');	
-  public $moduleVersion = '4.9';
+  public $moduleVersion = '4.8';
   protected $PaytrailApiVersion = '1.57c';	
 	
   function __construct()	
@@ -172,7 +172,7 @@ class paytrail
           //  echo "\n\nRequest ID: {$response->getHeader('cof-request-id')[0]}\n\n";
           //  echo '<br>' .'Request ID: ' .$response->getHeader('request-id')[0];
           //  echo '<br>' .(json_encode(json_decode($responseBody), JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES));
-          //  echo '<br><pre>'; print_r(json_decode($body,true)); exit;
+          // echo '<br><pre>'; print_r(json_decode($body,true)); exit;
 	}
         
 	// Starting active payment icon
@@ -533,7 +533,7 @@ public function getOrderItems($order)
                        'productCode'  => $item['code'],	
                        'units'        => $item['qty'],				
                        'unitPrice'    => intval($item['price']),
-                       'vatPercentage'=> $this->custom_round($item['vat']),
+                       'vatPercentage'=> round(floatval($item['vat']), 1),
                        'deliveryDate' => date('Y-m-d'),
                        'merchant'     => $this->merchantId,
                        'stamp'        => $this->generate_uuid(),
@@ -552,7 +552,7 @@ public function getOrderItems($order)
                        'productCode'  => $item['code'],	
                        'units'        => $item['qty'],				
                        'unitPrice'    => intval($item['price']),
-                       'vatPercentage'=> $this->custom_round($item['vat']),
+                       'vatPercentage'=> round(floatval($item['vat']), 1),
                        'deliveryDate' => date('Y-m-d'),
                        'merchant'     => $this->shop_in_shop_merchant_id,
                        'stamp'        => $this->generate_uuid(),				
@@ -584,7 +584,6 @@ public function itemArgs($order)
   foreach ($order->products as $key => $item) 
   {
     $item_final_price = number_format($item['final_price'], 2, '.', '')*100;	
-    //$item_final_price = $item['final_price'] *100 ;
     $item_tax = $item['tax'];
     $item_price = round($item_final_price * ($item_tax/100+1));		
     $itemqyt   += $item['qty'];
@@ -608,7 +607,7 @@ public function itemArgs($order)
                        'category' => '',
                        'qty' => floatval($item['qty']),
                        'price' => intval($item_price),
-                       'vat' => floatval($item_tax),
+                       'vat' => $item_tax,
                        'discount' => 0,
                        'type' => 1,
       );
@@ -616,9 +615,9 @@ public function itemArgs($order)
   }
   
   //Add shipping to product breakdown
-  $shipping_price = number_format($order->info['shipping_cost'], 2, '.', '')*100;
-  $shipping_tax_total = number_format($order->info['shipping_tax'], 2, '.', '')*100;
-
+  $shipping_price = $order->info['shipping_cost'] * 100;
+  $shipping_tax_total = $order->info['shipping_tax'] * 100;	
+  	
   if (DISPLAY_PRICE_WITH_TAX == 'true') 
   {
     $shipping_price = $shipping_price;
@@ -635,13 +634,29 @@ public function itemArgs($order)
                      'code' =>  $order->info['shipping_module_code'].'',
                      'qty' => 1,
                      'price' => round($shipping_price),
-                     'vat' => floatval($shipping_tax),
+                     'vat' => $shipping_tax,
                      'discount' => 0,
                      'type' => 2,
     );	
     $total_check += $shipping_price; 	
   }
-		
+	
+  //Add storepickup dicount
+  $storepickup_discount = $order->info['shipping_cost'];
+  if ($storepickup_discount < 0) 
+  {
+	$storepickup_discount_price = abs($order->info['shipping_cost']) * 100;
+    $items[] = array('title' => $order->info['shipping_method'],
+                     'code' =>  $order->info['shipping_module_code'].'',
+                     'qty' => -1,
+                     'price' => $storepickup_discount_price,
+                     'vat' => 0,
+                     'discount' => 0,
+                     'type' => 4,
+    );	
+    $total_check -= $storepickup_discount_price; 
+  }
+
   // Add loworderfee breakdown
   // Check if there is a group discount enabled
   foreach ($order_totals as $o_total)
@@ -666,7 +681,7 @@ public function itemArgs($order)
                          'code' => '',
 			 'qty' => 1,
 			 'price' => $loworderpretax_price,
-			 'vat' => floatval($loworder_tax_rate),
+			 'vat' => $loworder_tax_rate,
 			 'discount' => 0,
 			 'type' => 1,
 	);
@@ -838,18 +853,18 @@ public function itemArgs($order)
 
       // percentage and Free Shipping
       case 'E':
-        $E_shipping_tax_cost =  zen_round($shiping_ot_tax, $decimals) * 100;
-	$E_shipping_price = $coupon_amount_shipping + $E_shipping_tax_cost ;
-	$E_shipping_tax =($E_shipping_tax_cost/$coupon_amount_shipping)* 100 ;
-        $coupon_cost = (($order_subtotal + $discount_amount_shipping)/100) * ($coupon_amount_formatted);
-	$coupon_result = ($coupon_cost + $discount_amount_shipping);
-	$coupon_result = zen_round($coupon_result, $decimals) * 100;
+       $E_shipping_tax_cost =  zen_round($shiping_ot_tax, $decimals) * 100;
+       $E_shipping_price = $coupon_amount_shipping + $E_shipping_tax_cost ;
+       $E_shipping_tax =($E_shipping_tax_cost/$coupon_amount_shipping)* 100 ;
+       $coupon_cost = (($order_subtotal + $discount_amount_shipping)/100) * ($coupon_amount_formatted);
+       $coupon_result = ($coupon_cost + $discount_amount_shipping);
+       $coupon_result = zen_round($coupon_result, $decimals) * 100;
 					
-	$items[] = array('title' => MODULE_PAYMENT_PAYTRAIL_FREE_SHPING,
+       $items[] = array('title' => MODULE_PAYMENT_PAYTRAIL_FREE_SHPING,
                          'code' => '',
 			 'qty' => 1,
 			 'price' => $E_shipping_price,
-			 'vat' => floatval($E_shipping_tax),
+			 'vat' => $E_shipping_tax,
 			 'discount' => 0,
 			 'type' => 2,
 	);	
@@ -907,7 +922,7 @@ public function itemArgs($order)
     );
     $total_check -= $redem_value;
   }		
-
+	
   // Add sumround breakdown
   if ($this->amount <> $total_check)  
   {
@@ -934,23 +949,6 @@ public function itemArgs($order)
   return $items;
 } // end itemArgs($order)
 	
-public function custom_round($number) {
-    // If the number is between 25.3 and 25.7 and not 25.5
-    if ($number >= 25.4 && $number < 25.7 && $number != 25.5) 
-	{
-        return 25.5; // Round to 25.5
-    }
-   // Otherwise, return the number as is
-    return $number;
-	
-// Örnek kullanımlar
-//echo custom_round(25.442456); // 25.5
-//echo custom_round(25.778834); // 25.5
-//echo custom_round(25.785548); // 25.5
-//echo custom_round(14.5);      // 14.5
-//echo custom_round(10.0);      // 10.0	
-}
-
 // Stamp random trans id
 public function generate_uuid() 
 {
