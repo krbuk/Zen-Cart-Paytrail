@@ -29,7 +29,7 @@ class paytrail
 {
   var $code, $title, $description, $enabled, $sort_order;
   private $allowed_currencies = array('EUR');	
-  public $moduleVersion = '4.8';
+  public $moduleVersion = '4.8.4';
   protected $PaytrailApiVersion = '1.57c';	
 	
   function __construct()	
@@ -172,7 +172,7 @@ class paytrail
           //  echo "\n\nRequest ID: {$response->getHeader('cof-request-id')[0]}\n\n";
           //  echo '<br>' .'Request ID: ' .$response->getHeader('request-id')[0];
           //  echo '<br>' .(json_encode(json_decode($responseBody), JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES));
-          // echo '<br><pre>'; print_r(json_decode($body,true)); exit;
+           echo '<br><pre>'; print_r(json_decode($body,true)); exit;
 	}
         
 	// Starting active payment icon
@@ -615,9 +615,10 @@ public function itemArgs($order)
   }
   
   //Add shipping to product breakdown
-  $shipping_price =  number_format($order->info['shipping_cost'], 2, '.', '')*100;	
-  $shipping_tax_total = $order->info['shipping_tax'] * 100;	
-  	
+  $shipping_price	  =  $order->info['shipping_cost'];	
+  $shipping_tax_total = $order->info['shipping_tax'];
+  $shipping_tax = ($shipping_tax_total/($shipping_price - $shipping_tax_total))*100;	
+	
   if (DISPLAY_PRICE_WITH_TAX == 'true') 
   {
     $shipping_price = $shipping_price;
@@ -629,11 +630,11 @@ public function itemArgs($order)
   
   if($shipping_price > 0 )
   {
-    $shipping_tax = ($shipping_tax_total/($shipping_price - $shipping_tax_total))*100;			
+	$shipping_price = number_format($shipping_price, 2, '.', '')*100;
     $items[] = array('title' => $order->info['shipping_method'],
                      'code' =>  $order->info['shipping_module_code'].'',
                      'qty' => 1,
-                     'price' => round($shipping_price),
+                     'price' => $shipping_price,
                      'vat' => $shipping_tax,
                      'discount' => 0,
                      'type' => 2,
