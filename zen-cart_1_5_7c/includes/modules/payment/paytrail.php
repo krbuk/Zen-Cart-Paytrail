@@ -615,7 +615,7 @@ public function itemArgs($order)
   }
   
   //Add shipping to product breakdown
-  $shipping_price = $order->info['shipping_cost'] * 100;
+  $shipping_price =  number_format($order->info['shipping_cost'], 2, '.', '')*100;	
   $shipping_tax_total = $order->info['shipping_tax'] * 100;	
   	
   if (DISPLAY_PRICE_WITH_TAX == 'true') 
