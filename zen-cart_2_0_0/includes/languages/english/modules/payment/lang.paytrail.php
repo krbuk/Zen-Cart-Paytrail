@@ -22,7 +22,7 @@ $define = [
 	'MODULE_PAYMENT_PAYTRAIL_PAYMENT_METHOD' => 'Payment method : ',
 	'MODULE_PAYMENT_PAYTRAIL_REFERENCE_NUMBER' => 'Reference Number : ',
 	'MODULE_PAYMENT_PAYTRAIL_PAYMENT_ERROR' => 'ERROR ! Paytrail online payment service does not respond.',
-	'MODULE_PAYMENT_PAYTRAIL_SELECET_OTHER' => 'Kilikka takaisin nappi ja valitse muu maksutapa',
+	'MODULE_PAYMENT_PAYTRAIL_SELECET_OTHER' => 'Click the back button and choose another payment method',
 	// Payment information
 	'MODULE_PAYMENT_PAYTRAIL_PAYMENT_OK' => '[Payment completed] ',
 	'MODULE_PAYMENT_PAYTRAIL_PAYMENT_FAIL' => '[Payment status canceled] ',
@@ -32,5 +32,6 @@ $define = [
 	'MODULE_PAYMENT_PAYTRAIL_ORDER_NUMBER' => 'Order number : ',
 	'MODULE_PAYMENT_PAYTRAIL_PAYMENT_AUTHRORIZED' => 'Payment verified.',
 	'MODULE_PAYMENT_PAYTRAIL_PAYMENT_SETTLED' => 'Payment charged.',
+	'MODULE_PAYMENT_PAYTRAIL_ADD_CARD' => 'Add Credit Card',
 ];
 return $define;

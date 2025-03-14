@@ -29,7 +29,7 @@ class paytrail
 {
   var $code, $title, $description, $enabled, $sort_order;
   private $allowed_currencies = array('EUR');	
-  public $moduleVersion = '4.8.7';
+  public $moduleVersion = '4.8.5';
   protected $PaytrailApiVersion = '1.57c';	
 	
   function __construct()	
@@ -172,7 +172,7 @@ class paytrail
           //  echo "\n\nRequest ID: {$response->getHeader('cof-request-id')[0]}\n\n";
           //  echo '<br>' .'Request ID: ' .$response->getHeader('request-id')[0];
           //  echo '<br>' .(json_encode(json_decode($responseBody), JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES));
-          //  echo '<br><pre>'; print_r(json_decode($body,true)); exit;
+          // echo '<br><pre>'; print_r(json_decode($body,true)); exit;
 	}
         
 	// Starting active payment icon
@@ -626,6 +626,7 @@ public function itemArgs($order)
 		$shipping_tax = 0; // or another appropriate value or error handling
   }	
 	
+	
   if (DISPLAY_PRICE_WITH_TAX == 'true') 
   {
     $shipping_price = $shipping_price;
@@ -639,12 +640,12 @@ public function itemArgs($order)
   {
 	$shipping_price = number_format($shipping_price, 2, '.', '')*100;
     $items[] = array('title' => $order->info['shipping_method'],
-                     'code'  =>  $order->info['shipping_module_code'].'',
-                     'qty'   => 1,
+                     'code' =>  $order->info['shipping_module_code'].'',
+                     'qty' => 1,
                      'price' => $shipping_price,
-                     'vat'   => $shipping_tax,
+                     'vat' => $shipping_tax,
                      'discount' => 0,
-                     'type'  => 2,
+                     'type' => 2,
     );	
     $total_check += $shipping_price; 	
   }
@@ -653,15 +654,14 @@ public function itemArgs($order)
   $storepickup_discount = $order->info['shipping_cost'];
   if ($storepickup_discount < 0) 
   {
-	//$storepickup_discount_price = abs($order->info['shipping_cost']) * 100;
-	$storepickup_discount_price = abs(number_format($order->info['shipping_cost'], 2, '.', '')*100);  
+	$storepickup_discount_price = abs($order->info['shipping_cost']) * 100;
     $items[] = array('title' => $order->info['shipping_method'],
-                     'code'  =>  $order->info['shipping_module_code'].'',
-                     'qty'   => -1,
+                     'code' =>  $order->info['shipping_module_code'].'',
+                     'qty' => -1,
                      'price' => $storepickup_discount_price,
-                     'vat'   => 0,
+                     'vat' => 0,
                      'discount' => 0,
-                     'type'  => 4,
+                     'type' => 4,
     );	
     $total_check -= $storepickup_discount_price; 
   }
@@ -922,7 +922,6 @@ public function itemArgs($order)
     $redem_value = number_format($_SESSION['redeem_points'], 2, '.', '');
     // if tax is to be calculated on purchased GVs, calculate it
     $items[] = array('title' => MODULE_PAYMENT_PAYTRAIL_REWARD_POINT_TEXT,
-
                      'code' => '',
                      'qty' => -1,
                      'price' => $redem_value,
@@ -932,11 +931,7 @@ public function itemArgs($order)
     );
     $total_check -= $redem_value;
   }		
-$total_check = intval($total_check);
 	
-// TEST - Check the amount and order total
-//echo 'Amount : ' .$this->amount .' <->  OrderTotal : ' .$total_check; exit;
-
   // Add sumround breakdown
   if ($this->amount <> $total_check)  
   {

@@ -639,12 +639,12 @@ public function itemArgs($order)
   {
 	$shipping_price = number_format($shipping_price, 2, '.', '')*100;
     $items[] = array('title' => $order->info['shipping_method'],
-                     'code'  =>  $order->info['shipping_module_code'].'',
-                     'qty'   => 1,
+                     'code' =>  $order->info['shipping_module_code'].'',
+                     'qty' => 1,
                      'price' => $shipping_price,
-                     'vat'   => $shipping_tax,
+                     'vat' => $shipping_tax,
                      'discount' => 0,
-                     'type'  => 2,
+                     'type' => 2,
     );	
     $total_check += $shipping_price; 	
   }
@@ -656,12 +656,12 @@ public function itemArgs($order)
 	//$storepickup_discount_price = abs($order->info['shipping_cost']) * 100;
 	$storepickup_discount_price = abs(number_format($order->info['shipping_cost'], 2, '.', '')*100);  
     $items[] = array('title' => $order->info['shipping_method'],
-                     'code'  =>  $order->info['shipping_module_code'].'',
-                     'qty'   => -1,
+                     'code' =>  $order->info['shipping_module_code'].'',
+                     'qty' => -1,
                      'price' => $storepickup_discount_price,
-                     'vat'   => 0,
+                     'vat' => 0,
                      'discount' => 0,
-                     'type'  => 4,
+                     'type' => 4,
     );	
     $total_check -= $storepickup_discount_price; 
   }

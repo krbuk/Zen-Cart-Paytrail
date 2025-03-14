@@ -32,6 +32,7 @@ $define = [
 	'MODULE_PAYMENT_PAYTRAIL_ORDER_NUMBER' => 'Tilausnumero : ',
 	'MODULE_PAYMENT_PAYTRAIL_PAYMENT_AUTHRORIZED' => 'Maksu varmennettu.',
 	'MODULE_PAYMENT_PAYTRAIL_PAYMENT_SETTLED' => 'Maksu veloitettu.',
+	'MODULE_PAYMENT_PAYTRAIL_ADD_CARD' => 'Lisää luottokortti',	
 ];
 
 return $define;

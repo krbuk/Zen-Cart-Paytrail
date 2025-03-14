@@ -5,7 +5,7 @@
  * @package payment
  * @copyright Copyright 2003-2019 Zen Cart Development Team
  * @license http://www.zen-cart.com/license/2_0.txt GNU Public License V2.0
- * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2024 Apr 20 Modified in v5.4.3
+ * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2024 Apr 20 Modified in v5.4.0b
  */
 use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\Psr7\Uri;
@@ -107,7 +107,7 @@ require DIR_FS_CATALOG .DIR_WS_CLASSES . 'vendors/paytrail/autoload.php';
     /**
      *  For API module version
      */
-    public $moduleVersion = '5.4.3';      
+    public $moduleVersion = '5.4.0';      
     /**
      * $allowed_currencies is the valid Paytrail currency to use default EUR
      * @var string
@@ -203,10 +203,8 @@ require DIR_FS_CATALOG .DIR_WS_CLASSES . 'vendors/paytrail/autoload.php';
     // ***       Paytrail           ***
     // ********************************			
     //Create a randomized order number and order stamp'
-	$transactionId	= null;	
-	$terms			= '<a href="https://www.paytrail.com/kuluttaja/tietoa-maksamisesta">https://www.paytrail.com/kuluttaja/tietoa-maksamisesta</a>';
-    $number_rand	= time().rand(1,9);
-    $order_number	= str_pad($number_rand, 12, "1", STR_PAD_RIGHT);
+    $number_rand = time().rand(1,9);
+    $order_number = str_pad($number_rand, 12, "1", STR_PAD_RIGHT);
     $this->order_number = $order_number;
 	
     // Order amount
@@ -595,7 +593,7 @@ protected function getHeaders(string $method, string $transactionId = null)
               'content-type'        	=> 'application/json; charset=utf-8',
   ];
 
-  if (!empty($transactionId)) 
+  if (! empty($transactionId)) 
   {
     $headers['checkout-transaction-id'] = $transactionId;
   }
@@ -1020,7 +1018,7 @@ public function itemArgs($order)
   // Add reward points breakdown
   if ($redeemPoints > 0) 
   {
-    $redem_value = number_format((float)$redeemPoints, 2, '.', '');
+    $redem_value = number_format($redeemPoints, 2, '.', '');
     // if tax is to be calculated on purchased GVs, calculate it
     $items[] = array('title' => MODULE_PAYMENT_PAYTRAIL_REWARD_POINT_TEXT,
                      'code' => '',
