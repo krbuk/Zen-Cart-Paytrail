@@ -5,7 +5,7 @@
  * @package payment
  * @copyright Copyright 2003-2019 Zen Cart Development Team
  * @license http://www.zen-cart.com/license/2_0.txt GNU Public License V2.0
- * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2024 Apr 20 Modified in v5.4.3
+ * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2024 Apr 20 Modified in v5.5.0
  */
 use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\Psr7\Uri;
@@ -107,7 +107,7 @@ require DIR_FS_CATALOG .DIR_WS_CLASSES . 'vendors/paytrail/autoload.php';
     /**
      *  For API module version
      */
-    public $moduleVersion = '5.4.3';      
+    public $moduleVersion = '5.4.6';      
     /**
      * $allowed_currencies is the valid Paytrail currency to use default EUR
      * @var string
@@ -148,13 +148,11 @@ require DIR_FS_CATALOG .DIR_WS_CLASSES . 'vendors/paytrail/autoload.php';
          ) 
         $this->title .= '<span class="alert">' .MODULE_PAYMENT_PAYTRAIL_ALERT_TEST .'</span>';
       // determine order-status for transactions
-      if ((int)defined('MODULE_PAYMENT_PAYTRAIL_ORDER_STATUS_ID_SETTLED') && MODULE_PAYMENT_PAYTRAIL_ORDER_STATUS_ID_SETTLED > 0)
-      {
+      if ((int)defined('MODULE_PAYMENT_PAYTRAIL_ORDER_STATUS_ID_SETTLED') && MODULE_PAYMENT_PAYTRAIL_ORDER_STATUS_ID_SETTLED > 0) {
         $this->order_status = MODULE_PAYMENT_PAYTRAIL_ORDER_STATUS_ID_SETTLED;
       }
       // determine order-status for transactions
-      if ((int)defined('MODULE_PAYMENT_PAYTRAIL_ORDER_STATUS_ID_SETTLED') && MODULE_PAYMENT_PAYTRAIL_ORDER_STATUS_ID_SETTLED > 0)
-      {
+      if ((int)defined('MODULE_PAYMENT_PAYTRAIL_ORDER_STATUS_ID_SETTLED') && MODULE_PAYMENT_PAYTRAIL_ORDER_STATUS_ID_SETTLED > 0) {
         $this->order_status = MODULE_PAYMENT_PAYTRAIL_ORDER_STATUS_ID_SETTLED;
       }
       // check for zone compliance and any other conditionals
@@ -166,8 +164,7 @@ require DIR_FS_CATALOG .DIR_WS_CLASSES . 'vendors/paytrail/autoload.php';
       global $order, $db;
 
 // disable the module if the order only contains euro
-      if ($this->enabled == true) 
-      {
+      if ($this->enabled == true) {
         //Only EUR orders accepted
         $currency = $order->info['currency'];
         if(!(in_array($currency, $this->allowed_currencies)))
@@ -224,15 +221,20 @@ require DIR_FS_CATALOG .DIR_WS_CLASSES . 'vendors/paytrail/autoload.php';
 	{
       $response = $client->post($this->form_action_url, ['body' => $body]);
 	} 
-        catch (\GuzzleHttp\Exception\ClientException $e) 
-          {
-            if ($e->hasResponse()) 
-            {
+        catch (\GuzzleHttp\Exception\ClientException $e) {
+            if ($e->hasResponse()) {
               $response = $e->getResponse();
+			  echo 	'<style>
+			  		   #btn_submit, .buttonRow  { display: none; } /*Submit button hidden */
+					   .btn-success { display: none; } /*Submit button hidden */
+					   .payment-providers { display: none; }
+					   .ms-auto { display: none; }
+					 </style>				  
+			  ';
               echo "Unexpected HTTP status code: {$response->getStatusCode()}\n\n";
               echo "<div style='color:red'>" .MODULE_PAYMENT_PAYTRAIL_PAYMENT_ERROR;
-              echo "<br><strong>" .MODULE_PAYMENT_PAYTRAIL_SELECET_OTHER  ."</strong>";
-              echo "<div class='buttonRow back'>" .zen_back_link() . zen_image_button(BUTTON_IMAGE_BACK, BUTTON_BACK_ALT) . "</a></div></div>";
+              echo "<br><strong>" .MODULE_PAYMENT_PAYTRAIL_SELECET_OTHER  ."</strong> &nbsp;";
+              echo "<div class='btn btn btn-outline-danger btn-sm'>".zen_back_link() . zen_image_button(BUTTON_IMAGE_BACK, BUTTON_BACK_ALT) . "</a></div></div>";
             }
           }
   
@@ -242,12 +244,12 @@ require DIR_FS_CATALOG .DIR_WS_CLASSES . 'vendors/paytrail/autoload.php';
     $responseHeaders = array_column(array_map(function ($key, $value) { return [ $key, $value[0] ]; }, array_keys($response->getHeaders()), array_values($response->getHeaders())), 1, 0);
     
     $responseHmac = $this->calculateHmac($responseHeaders, $responseBody, $this->secretKey);
-      if ($responseHmac !== $response->getHeader('signature')[0]) 
-      {
+	$signatureHeader = $response->getHeader('signature');
+
+	if (!isset($signatureHeader[0]) || $responseHmac !== $signatureHeader[0]) {
 		echo '<div style="color:red">'. MODULE_PAYMENT_PAYTRAIL_TEXT_API_ERROR .'</div>';
-      } 
-		else 
-        {
+	}
+	else {
           $decodedresponsebody = json_decode($responseBody);
           /**
           ** Error control	
@@ -258,9 +260,11 @@ require DIR_FS_CATALOG .DIR_WS_CLASSES . 'vendors/paytrail/autoload.php';
           // echo '<br>' .(json_encode(json_decode($responseBody), JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES));
           // echo '<br><pre>'; print_r(json_decode($body,true)); exit;
 		}
-      $decodedresponsebody = json_decode($responseBody);
-	  $this->transactionId = $decodedresponsebody->transactionId;       
-		
+		$decodedresponsebody = json_decode($responseBody);
+		if (isset($decodedresponsebody->transactionId)) {
+			$this->transactionId = $decodedresponsebody->transactionId;
+		}		
+     
 	// Starting active payment icon
 	$html  = "</form>\n";
 	$html .='
@@ -285,10 +289,10 @@ require DIR_FS_CATALOG .DIR_WS_CLASSES . 'vendors/paytrail/autoload.php';
               height: 50px;
               width: 30%;
 	    }
-          .button-content 
+          .button-content img
           {
-            width:140px; 
-            height:75px;"
+            width:100px; 
+            height:50px;"
           }
           #btn_submit, .buttonRow  { display: none; } /*Submit button hidden */
           .btn-success { display: none; } /*Submit button hidden */
@@ -321,10 +325,12 @@ require DIR_FS_CATALOG .DIR_WS_CLASSES . 'vendors/paytrail/autoload.php';
             'creditcard' => 'Card payment methods', 
             'credit'     => 'Invoice and instalment payment methods',
           ];
+
 	$html .= '';
 	$html .= '<section class="payment-providers"><h2>' .MODULE_PAYMENT_PAYTRAIL_SELECET_PAYMENT .'</h2>
 	';
-	$html .= $decodedresponsebody->terms;	
+	$html .= !empty($decodedresponsebody->terms) ? $decodedresponsebody->terms : '
+	';		
 	$html .= '
 	<div id="provider-group-switcher"><br>
 	';
@@ -347,10 +353,8 @@ require DIR_FS_CATALOG .DIR_WS_CLASSES . 'vendors/paytrail/autoload.php';
 	endif;
 	
         // Provider payment group name, icon and id 
-	if (isset($decodedresponsebody->groups) && is_array($decodedresponsebody->groups)) 
-	{ 		
-	  foreach ($decodedresponsebody->groups as $group) 
-      {
+	if (!empty($decodedresponsebody->groups) && is_iterable($decodedresponsebody->groups)) {
+		foreach ($decodedresponsebody->groups as $group) {
           $groups[] = 
             [
               'id'  => $group->id,
@@ -359,12 +363,12 @@ require DIR_FS_CATALOG .DIR_WS_CLASSES . 'vendors/paytrail/autoload.php';
               'svg' => $group->svg
             ];
           $html .= '<div style="clear: both"></div>';	
-          $html .= '<img src="'.$group->icon .'" alt="'.$group->name .'" title="'.$group->name.'" style="width:22px; float:left; margin-bottom: 10px">'
+          $html .= '<img src="'.$group->icon .'" alt="'.$group->name .'" title="'.$group->name.'" style="width:24px; float:left; margin-bottom: 10px">'
                   .'<h3 class="provider-group-header">&nbsp;' .$group->name .'</h3>
+				 
           ';
           // Provider name 
-          foreach ($decodedresponsebody->providers  as $providersmethods) 
-          {
+          foreach ($decodedresponsebody->providers  as $providersmethods) {
             $allPovidersMethods[] = 
               [
                 'url'         =>  $providersmethods->url,
@@ -376,15 +380,13 @@ require DIR_FS_CATALOG .DIR_WS_CLASSES . 'vendors/paytrail/autoload.php';
                 'parameters'  =>  $providersmethods->parameters
               ];	
               // Selected provider id and group 
-              if ($group->id == $providersmethods->group)
-              {	
+              if ($group->id == $providersmethods->group) {	
                   $html .= '<div class="provider-group">
                   ';
                   $html .= '<form action="' .$providersmethods->url .'" method="POST">
                   ';
                 // Provider form filesds
-                foreach ($providersmethods->parameters as $parameter) 
-                {
+                foreach ($providersmethods->parameters as $parameter) {
                   $formFields[] = 
                     [
                       'name'  =>  $parameter->name,
@@ -406,8 +408,7 @@ require DIR_FS_CATALOG .DIR_WS_CLASSES . 'vendors/paytrail/autoload.php';
                 } // end  selected provider id and group 
           } // end provider name 
         } // end provider-group-header	
-	} else 
-		{
+	} else {
 			// Take action or log in case of error
 			echo '<div style="color:red">'. MODULE_PAYMENT_PAYTRAIL_TEXT_API_ERROR .'</div>';
 			error_log('Invalid or empty group data was received.');
@@ -421,15 +422,13 @@ require DIR_FS_CATALOG .DIR_WS_CLASSES . 'vendors/paytrail/autoload.php';
     }
 
     function before_process() {
-      if (empty($_GET['checkout-status']))				
-      {	
+      if (empty($_GET['checkout-status'])) {	
         zen_redirect(zen_href_link(FILENAME_CHECKOUT_PAYMENT, '', 'SSL', true, false));				
       }	      
       return false;
     }
 
-	function after_process()
-	{
+	function after_process() {
 	  global  $messageStack, $insert_id, $db, $order;
 	  $payment_status = array
 			  (
@@ -449,15 +448,13 @@ require DIR_FS_CATALOG .DIR_WS_CLASSES . 'vendors/paytrail/autoload.php';
 			zen_redirect(zen_href_link(FILENAME_CHECKOUT_PAYMENT, '', 'SSL'));
 			$messageStack->add_session('checkout_payment', $error_message, 'error');				
 		}
-			else if ($_GET['checkout-status'] == 'ok')				
-			{
+			else if ($_GET['checkout-status'] == 'ok')	{
 			  // Update order history
 			  $commentString = zen_db_prepare_input(MODULE_PAYMENT_PAYTRAIL_TITLE_STATUS .$payment_status[$_GET['checkout-status']] .MODULE_PAYMENT_PAYTRAIL_PAYMENT_METHOD .$_GET['checkout-provider'] . " , " .MODULE_PAYMENT_PAYTRAIL_REFERENCE_NUMBER .$_GET['checkout-reference'] . ".");
 			  // Writing payment information to order status history	
 			  zen_update_orders_history($insert_id, $commentString, null, $order->info['order_status'], 3);	
 			}
-			  else
-			  {
+			  else {
 				zen_redirect(zen_href_link(FILENAME_CHECKOUT_PAYMENT, '', 'SSL'));  
 			  }			
 		
@@ -479,8 +476,7 @@ require DIR_FS_CATALOG .DIR_WS_CLASSES . 'vendors/paytrail/autoload.php';
 
     function install() {
       global $db, $messageStack;
-      if (defined('MODULE_PAYMENT_PAYTRAIL_STATUS')) 
-      {
+      if (defined('MODULE_PAYMENT_PAYTRAIL_STATUS')) {
         $messageStack->add_session('Paytrail module already installed.', 'error');
         zen_redirect(zen_href_link(FILENAME_MODULES, 'set=payment&module=paytrail', 'NONSSL'));
         return 'failed';
@@ -512,11 +508,9 @@ require DIR_FS_CATALOG .DIR_WS_CLASSES . 'vendors/paytrail/autoload.php';
 // ********************************
 //       Paytrail  Get Body
 // ********************************	
-public function getBody()
-{
+public function getBody() {
   global $order, $currencies, $db, $order_totals;	
-  if (!isset($order->delivery['country']['iso_code_2'])) 
-  {
+  if (!isset($order->delivery['country']['iso_code_2'])) {
     $order->delivery['street_address'] = $order->billing['street_address'];
     $order->delivery['postcode'] = $order->billing['postcode'];
     $order->delivery['city'] = $order->delivery['city'];
@@ -532,7 +526,7 @@ $billingstate = isset($order->billing['state']) ? $order->billing['state'] : '';
 $billing_state = substr($billingstate, 0, 10);
 $currency = $order->info['currency'];
 	
-  $body = json_encode(  [
+  $body = json_encode( [
             'stamp' 	=> $this->generate_uuid(),
             'reference' => $this->order_number,
             'amount'    => $this->amount,
@@ -582,8 +576,7 @@ $currency = $order->info['currency'];
 }
 
 // Get Headers
-protected function getHeaders(string $method, string $transactionId = null)
-{
+protected function getHeaders(string $method, string $transactionId = null) {
   $datetime = new \DateTime();
   $headers = ['checkout-account'    	=> $this->merchantId,
               'checkout-algorithm'  	=> 'sha256',
@@ -595,30 +588,25 @@ protected function getHeaders(string $method, string $transactionId = null)
               'content-type'        	=> 'application/json; charset=utf-8',
   ];
 
-  if (!empty($transactionId)) 
-  {
+  if (!empty($transactionId)) {
     $headers['checkout-transaction-id'] = $transactionId;
   }
   return $headers;
 }	
 	
-public function jsonSerialize()
-{
+public function jsonSerialize() {
   return array_filter(get_object_vars($this), function ($item) { return $item !== null; } );
 }
 	
-public function getOrderItems($order)
-{
+public function getOrderItems($order) {
   $items = [];	
   // Normal payment item	
-  if (empty($this->shop_in_shop_merchant_id)) 
-  {	
-    foreach ($this->itemArgs($order) as $key => $item) 
-    {
+  if (empty($this->shop_in_shop_merchant_id)) {	
+    foreach ($this->itemArgs($order) as $key => $item) {
       $items[] = array(
           'unitPrice'    => intval($item['price']),
           'units'        => $item['qty'],
-          'vatPercentage'=> round(floatval($item['vat']), 1),
+          'vatPercentage'=> (float)number_format($item['vat'], 1, '.', ''),
           'productCode'  => $item['code'],
           'deliveryDate' => date('Y-m-d'),
           'description'  => $item['title'],
@@ -629,14 +617,12 @@ public function getOrderItems($order)
   }	
 
   // shop-in-shop payment item request 
-  else 
-  {
-    foreach ($this->itemArgs($order) as $key => $item) 
-    {
+  else {
+    foreach ($this->itemArgs($order) as $key => $item) {
       $items[] = array(
           'unitPrice'    => intval($item['price']),
           'units'        => $item['qty'],
-          'vatPercentage'=> round(floatval($item['vat']), 1),
+          'vatPercentage'=> (float)number_format($item['vat'], 1, '.', ''),
           'productCode'  => $item['code'],
           'deliveryDate' => date('Y-m-d'),
           'description'  => $item['title'],
@@ -654,8 +640,7 @@ public function getOrderItems($order)
   return $items;
 }
 	
-public function itemArgs($order)
-{
+public function itemArgs($order) {
   global $order, $currencies, $db, $order_totals;
 	
   //Add product breakdown
@@ -669,16 +654,14 @@ public function itemArgs($order)
   // Array order items, tax  and price
   $items = array();	
 
-  foreach ($order->products as $key => $item) 
-  {
+  foreach ($order->products as $key => $item) {
     $item_final_price = number_format($item['final_price'], 2, '.', '')*100;	
     //$item_final_price = $item['final_price'] *100 ;
     $item_tax = $item['tax'];
     $item_price = round($item_final_price * ($item_tax/100+1));		
     $itemqyt += $item['qty'];
     $total_check  +=  $item_price * $item['qty'];
-    if ($order_subtotal == 0) 
-    {
+    if ($order_subtotal == 0) {
       $items[] = array('title' => $item['name'],
                        'code' => $item['model'],
                        'category' => '',
@@ -689,14 +672,13 @@ public function itemArgs($order)
                        'type' => 1,
       );
     }
-    else
-    {
+    else {
       $items[] = array('title' => $item['name'],
                        'code' => $item['model'],
                        'category' => '',
                        'qty' => floatval($item['qty']),
                        'price' => intval($item_price),
-                       'vat' => round(floatval($item_tax)),
+                       'vat' => $item_tax,
                        'discount' => 0,
                        'type' => 1,
       );
@@ -707,26 +689,22 @@ public function itemArgs($order)
   $shipping_price	  =  $order->info['shipping_cost'];	
   $shipping_tax_total = $order->info['shipping_tax'];
 
-  if (($shipping_price - $shipping_tax_total) != 0) 
-  {
+  if (($shipping_price - $shipping_tax_total) != 0) {
 	  $shipping_tax = ($shipping_tax_total / ($shipping_price - $shipping_tax_total)) * 100;
   } else {
 		// Handle the case where the denominator is zero
 		$shipping_tax = 0; // or another appropriate value or error handling
   }
 	
-  if (DISPLAY_PRICE_WITH_TAX == 'true') 
-  {
+  if (DISPLAY_PRICE_WITH_TAX == 'true') {
     $shipping_price = $shipping_price;
   } 
-  else 
-  {
+  else {
     $shipping_price = $shipping_price + $shipping_tax_total;
   }		
   
 
-  if($shipping_price > 0 )
-  {
+  if($shipping_price > 0 ) {
 	$shipping_price = number_format($shipping_price, 2, '.', '')*100;
     $items[] = array('title' => $order->info['shipping_method'],
                      'code' =>  $order->info['shipping_module_code'].'',
@@ -741,8 +719,7 @@ public function itemArgs($order)
 	
   //Add storepickup dicount
   $storepickup_discount = $order->info['shipping_cost'];
-  if ($storepickup_discount < 0) 
-  {
+  if ($storepickup_discount < 0) {
 	$storepickup_discount_price = abs($order->info['shipping_cost']) * 100;
     $items[] = array('title' => $order->info['shipping_method'],
                      'code' =>  $order->info['shipping_module_code'].'',
@@ -758,110 +735,90 @@ public function itemArgs($order)
   // Add loworderfee breakdown
   // Check if there is a group discount enabled
   $discount_amount_shipping = 0; 	
-  foreach ($order_totals as $o_total)
-  {
-    if(isset($o_total['code']) && $o_total['code'] == 'ot_loworderfee')
-    {
-      if(isset($o_total['value']) && $o_total['value'] > 0)
-      {
+  foreach ($order_totals as $o_total) {
+    if(isset($o_total['code']) && $o_total['code'] == 'ot_loworderfee') {
+      if(isset($o_total['value']) && $o_total['value'] > 0) {
         $query = "select * from " . TABLE_CONFIGURATION . " where configuration_key='MODULE_ORDER_TOTAL_LOWORDERFEE_TAX_CLASS'";
 	$loworder_tax = $db->Execute($query);
 	$loworder_tax_rate = zen_get_tax_rate($loworder_tax->fields['configuration_value'], $order->billing['country']['id'], $order->billing['zone_id']);
 	$loworder_price_format = number_format($o_total['value'], 2, '.', '') * 100;
-	if (DISPLAY_PRICE_WITH_TAX == 'true')
-	{
+	if (DISPLAY_PRICE_WITH_TAX == 'true') {
           $loworderpretax_price = $loworder_price_format;
 	}
-	else 
-        {
+	else {
           $loworderpretax_price =  ($loworder_price_format / ($loworder_tax_rate/100+1)) * 100;
 	}
-	$items[] = array('title' => MODULE_PAYMENT_PAYTRAIL_LOWORDER_TEXT,
-                         'code' => '',
-			 'qty' => 1,
-			 'price' => $loworderpretax_price,
-			 'vat' => round(floatval($loworder_tax_rate)),
-			 'discount' => 0,
-			 'type' => 1,
+	$items[] = array('title'	=> MODULE_PAYMENT_PAYTRAIL_LOWORDER_TEXT,
+					 'code'		=> '',
+					 'qty'		=> 1,
+					 'price'	=> $loworderpretax_price,
+					 'vat'		=> $loworder_tax_rate,
+					 'discount' => 0,
+					 'type'		=> 1,
 	);
 	$total_check += $loworderpretax_price;
       }
     }
-    if(isset($o_total['code']) && $o_total['code'] == 'ot_subtotal')
-    {
-      if(isset($o_total['value']) && $o_total['value'] > 0)
-      {
+    if(isset($o_total['code']) && $o_total['code'] == 'ot_subtotal') {
+      if(isset($o_total['value']) && $o_total['value'] > 0) {
         $order_total_sub_total = $o_total['value'];
       }
     }			
 
     //Add group discount pricing breakdown
-    if($o_total['code'] == 'ot_group_pricing')
-    {
-      if($o_total['value'] > 0)
-      {
+    if($o_total['code'] == 'ot_group_pricing') {
+      if($o_total['value'] > 0) {
         $group_amount_format = number_format($o_total['value'], 2, '.', '') * 100;
-	if (DISPLAY_PRICE_WITH_TAX == 'true')
-        {
+	if (DISPLAY_PRICE_WITH_TAX == 'true') {
           $group_amount = round(floatval($group_amount_format));
         }
-        else 
-        {
+        else {
           $group_amount = round(floatval($group_amount_format + $order_total_sub_total));
         }				
-	$items[] = array('title' => MODULE_PAYMENT_PAYTRAIL_GROUP_TEXT,
-                         'code' => '',
-			 'qty' => -1,
-			 'price' => intval($group_amount),
-			 'vat' => 0,
-			 'discount' => 0,
-			 'type' => 4,
+	$items[] = array('title'	=> MODULE_PAYMENT_PAYTRAIL_GROUP_TEXT,
+					 'code'		=> '',
+					 'qty'		=> -1,
+					 'price'	=> intval($group_amount),
+					 'vat'		=> 0,
+					 'discount' => 0,
+					 'type'		=> 4,
         );			
 	$total_check -= $group_amount;					
       }
     }
-    else if(isset($o_total['code']) && $o_total['code'] == 'ot_shipping')
-    {
-      if(isset($o_total['value']) && $o_total['value'] > 0)
-      {
-        $discount_amount_shipping = $o_total['value'];
-      }
-		else { $discount_amount_shipping = 0; }
+    else if(isset($o_total['code']) && $o_total['code'] == 'ot_shipping') {
+		  if(isset($o_total['value']) && $o_total['value'] > 0) {
+			$discount_amount_shipping = $o_total['value'];
+		  }
+			else { $discount_amount_shipping = 0; 
+				 }
     }
-    else if(isset($o_total['code']) && $o_total['code'] == 'ot_group_pricing')
-    {
-      if(isset($o_total['value']) && $o_total['value'] > 0)
-      {
-        $group_discount_amount = $o_total['value'];
-      }
+    else if(isset($o_total['code']) && $o_total['code'] == 'ot_group_pricing') {
+		  if(isset($o_total['value']) && $o_total['value'] > 0) {
+			$group_discount_amount = $o_total['value'];
+		  }
     }
-    else if(isset($o_total['code']) && $o_total['code'] == 'ot_coupon')
-    {
-      if(isset($o_total['value']) && $o_total['value'] > 0)
-      {
-        $coupon_amount = $o_total['value'];
-      }
+    else if(isset($o_total['code']) && $o_total['code'] == 'ot_coupon') {
+		  if(isset($o_total['value']) && $o_total['value'] > 0) {
+			$coupon_amount = $o_total['value'];
+		  }
     }
-    else if(isset($o_total['code']) && $o_total['code'] == 'ot_tax')
-    {
-      if(isset($o_total['value']) && $o_total['value'] > 0)
-      {
-        $shiping_ot_tax = $o_total['value'];
-      }
+    else if(isset($o_total['code']) && $o_total['code'] == 'ot_tax') {
+		  if(isset($o_total['value']) && $o_total['value'] > 0) {
+			$shiping_ot_tax = $o_total['value'];
+		  }
     }
-    else if(isset($o_total['code']) && $o_total['code'] == 'ot_total')
-    {
-      if(isset($o_total['value']) && $o_total['value'] > 0)
-      {
-        $total_amount = number_format($o_total['value'], 2, '.', '') * 100;
-      }
+    else if(isset($o_total['code']) && $o_total['code'] == 'ot_total') {
+		  if(isset($o_total['value']) && $o_total['value'] > 0) {
+			$total_amount = number_format($o_total['value'], 2, '.', '') * 100;
+		  }
     }	
  }
  
  //Add coupon breakdown
+ $coupon_amount = isset($coupon_amount) ? $coupon_amount : 0;
  $coupon_amount_shipping = 0;	
- if (abs(isset($_SESSION['cc_id'])))
- {
+ if (abs(isset($_SESSION['cc_id']))) {
    $sql = "select * 
            from " . TABLE_COUPONS . " c,
            " . TABLE_COUPONS_DESCRIPTION . " cd,
@@ -871,37 +828,32 @@ public function itemArgs($order)
    $sql = $db->bindVars($sql, ':couponID:', $_SESSION['cc_id'], 'integer');
 			
    $coupon = $db->Execute($sql);
-   $coupon_product_count    = $coupon->fields['coupon_product_count'];
-   $coupon_tax_rate = $coupon->fields['tax_rate'];
-   $coupon_code     = $coupon->fields['coupon_code'].'';
-   $coupon_amount_formatted = number_format($coupon_amount, 2, '.', '');
-   $coupon_shipping_tax = zen_round($shipping_tax, $decimals) * 100 ;
-   $coupon_amount_shipping = $discount_amount_shipping * 100;
+   $coupon_product_count	= $coupon->fields['coupon_product_count'];
+   $coupon_tax_rate			= $coupon->fields['tax_rate'];
+   $coupon_code				= $coupon->fields['coupon_code'].'';
+   $coupon_amount_formatted = number_format((float)$coupon_amount, 2, '.', '');
+   $coupon_shipping_tax		= zen_round($shipping_tax, $decimals) * 100 ;
+   $coupon_amount_shipping	= $discount_amount_shipping * 100;
 
-   if (DISPLAY_PRICE_WITH_TAX == 'true') 
-   {
+   if (DISPLAY_PRICE_WITH_TAX == 'true') {
      $coupon_amount = $coupon_amount_formatted * 100;
    }
-   else 
-   {
+   else {
      $coupon_amount = $coupon->fields['coupon_amount'];
    }
    
    // Variable to compare product discount calculation to total amount of the order
    $coupon_result = 0;	
-   switch ($coupon->fields['coupon_type'])
-   {
+   switch ($coupon->fields['coupon_type']) {
      // case 'S': // shipping
      // $coupon_result = $coupon_tax_amount ;		
      //	break;
      case 'F': // unit amount
       // One by one  unit amount total
-      if ($coupon_product_count == 1) 
-      {
+      if ($coupon_product_count == 1) {
         $coupon_result = $coupon_amount * $itemqyt * 100;
       }
-      else 
-      {
+      else {
         $coupon_result = $coupon_amount;
       }
      break;
@@ -911,24 +863,22 @@ public function itemArgs($order)
       $coupon_amount_shipping = $discount_amount_shipping * 100;
       $O_shippingprice = $coupon_amount_shipping +  $coupon_shipping_tax;
       // One by one  unit amount total					
-      if ($coupon_product_count == 1) 
-      {
+      if ($coupon_product_count == 1) {
         $coupon_amount = $coupon_amount * 100 * $itemqyt;
         $coupon_amount_shipping = $discount_amount_shipping * 100;
         $coupon_result = $coupon_amount + $coupon_amount_shipping;
       } 
-       else 
-       {
+       else {
          $coupon_result = ($coupon_amount_formatted + $discount_amount_shipping) * 100;
        }
 
        $items[] = array('title' => MODULE_PAYMENT_PAYTRAIL_FREE_SHPING,
-                        'code' => '',
-                        'qty' => 1,
+                        'code'	=> '',
+                        'qty'	=> 1,
                         'price' => $O_shippingprice,
-                        'vat' => 0,
+                        'vat'	=> 0,
                         'discount' => 0,
-                        'type' => 2,
+                        'type'	=> 2,
        );
 
        $total_check += $O_shippingprice;
@@ -936,8 +886,7 @@ public function itemArgs($order)
       
       // percentage	
       case 'P': 
-        if($shippingcost > 0 )
-        {
+        if($shippingcost > 0 ) {
           // Coupon cost
           $coupon_cost = ($order_subtotal/100)*($coupon_amount);
           // add shiping cost and shping tax
@@ -945,8 +894,7 @@ public function itemArgs($order)
           $coupon_result =  ($coupon_cost + $coupon_shiping_tax) ;
           $coupon_result = zen_round($coupon_result, $decimals) * 100;
         }	
-	else 
-        {
+	else {
           $coupon_result = ($order_subtotal/100)*($coupon_amount_formatted);
           $coupon_result = zen_round($coupon_result, $decimals) * 100;
 	}
@@ -954,40 +902,41 @@ public function itemArgs($order)
 
       // percentage and Free Shipping
       case 'E':
-		if (isset($coupon_amount_shipping) == 0) {$coupon_amount_shipping = 1;}
-        $E_shipping_tax_cost=  zen_round($shiping_ot_tax, $decimals) * 100;
+		if (isset($coupon_amount_shipping) == 0) {
+			$coupon_amount_shipping = 1;
+		}
+        $E_shipping_tax_cost= zen_round($shiping_ot_tax, $decimals) * 100;
 		$E_shipping_price 	= $coupon_amount_shipping + $E_shipping_tax_cost ;
-		$E_shipping_tax 	=($E_shipping_tax_cost/$coupon_amount_shipping)* 100 ;
+		$E_shipping_tax 	= ($E_shipping_tax_cost/$coupon_amount_shipping)* 100 ;
     	$coupon_cost 		= (($order_subtotal + $discount_amount_shipping)/100) * ($coupon_amount_formatted);
 		$coupon_result 		= ($coupon_cost + $discount_amount_shipping);
 		$coupon_result 		= zen_round($coupon_result, $decimals) * 100;
 					
-		$items[] = array('title' => MODULE_PAYMENT_PAYTRAIL_FREE_SHPING,
-						 'code' => '',
-						 'qty' => 1,
-						 'price' => $E_shipping_price,
-						 'vat' => round(floatval($E_shipping_tax)),
+		$items[] = array('title'	=> MODULE_PAYMENT_PAYTRAIL_FREE_SHPING,
+						 'code'		=> '',
+						 'qty'		=> 1,
+						 'price'	=> $E_shipping_price,
+						 'vat'		=> $E_shipping_tax,
 						 'discount' => 0,
-						 'type' => 2,
+						 'type'		=> 2,
 		);	
 		$total_check += $E_shipping_price;	
       break;				
    } // end switch
    
    $items[] = array('title' => MODULE_PAYMENT_PAYTRAIL_COUPON_TEXT,
-                    'code' => $coupon_code,
-                    'qty' => -1,
+                    'code'	=> $coupon_code,
+                    'qty'	=> -1,
                     'price' => $coupon_result,
-                    'vat' => 0,
+                    'vat'	=> 0,
                     'discount' => 0,
-                    'type' => 4,
+                    'type'	=> 4,
    );
    $total_check -= $coupon_result;
   }
   
   // Add Gift Voucher breakdown
-  if ($_SESSION['cot_gv'] > 0) 
-  {
+  if ($_SESSION['cot_gv'] > 0) {
     $gv_query = "select *
                  from " . TABLE_COUPON_GV_CUSTOMER . " 
 		 		 where customer_id = '" . $_SESSION['customer_id'] . "'";
@@ -999,12 +948,12 @@ public function itemArgs($order)
 			
     // if tax is to be calculated on purchased GVs, calculate it
     $items[] = array('title' => MODULE_PAYMENT_PAYTRAIL_GIFT_TEXT,
-                     'code' => $gv_order_amount,
-                     'qty' => -1,
+                     'code'	 => $gv_order_amount,
+                     'qty'	 => -1,
                      'price' => $gv_amount,
-                     'vat' => 0,
+                     'vat'	 => 0,
                      'discount' => 0,
-                     'type' => 4,
+                     'type'	 => 4,
     );
     $total_check -= $gv_amount;
   }
@@ -1016,53 +965,46 @@ public function itemArgs($order)
       $redeemPoints = 0; // Reward Point not aktif
   }
   
-	
   // Add reward points breakdown
-  if ($redeemPoints > 0) 
-  {
+  if ($redeemPoints > 0) {
     $redem_value = number_format((float)$redeemPoints, 2, '.', '');
     // if tax is to be calculated on purchased GVs, calculate it
     $items[] = array('title' => MODULE_PAYMENT_PAYTRAIL_REWARD_POINT_TEXT,
-                     'code' => '',
-                     'qty' => -1,
+                     'code'	 => '',
+                     'qty'	 => -1,
                      'price' => $redem_value,
-                     'vat' => 0,
+                     'vat'	 => 0,
                      'discount' => 0,
-                     'type' => 4,
+                     'type'	 => 4,
     );
     $total_check -= $redem_value;
   }		
-	
 
   // Add sumround breakdown
-  if ($this->amount <> $total_check)  
-  {
-    if ($this->amount > $total_check)
-    {
+  if ($this->amount <> $total_check) {
+    if ($this->amount > $total_check) {
       $sum_round_count = $this->amount - $total_check;
       $qty = 1;
     }
-    if ($total_check > $this->amount)
-    {
+    if ($total_check > $this->amount) {
       $sum_round_count = $total_check - $this->amount;
       $qty = -1;
     }
     $sum_round = round(floatval($sum_round_count));
     $items[] = array('title' => MODULE_PAYMENT_PAYTRAIL_SUM_ROUND,
-                     'code' => '',
-                     'qty' => $qty,
+                     'code'	 => '',
+                     'qty'	 => $qty,
                      'price' => $sum_round,
-                     'vat' => 0,
+                     'vat'	 => 0,
                      'discount' => 0,
-                     'type' => 1,
+                     'type'	 => 1,
     );
   }
   return $items;
 } // end itemArgs($order)
 	
 // Stamp random trans id
-public function generate_uuid() 
-{
+public function generate_uuid() {
   return sprintf('%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
                   mt_rand( 0, 0xffff ), mt_rand( 0, 0xffff ),
                   mt_rand( 0, 0xffff ),
@@ -1072,8 +1014,7 @@ public function generate_uuid()
   );
 }
 	  
-public function calculateHmac($params = [], $body = '', $secretKey = '')
-{
+public function calculateHmac($params = [], $body = '', $secretKey = '') {
 	// Keep only checkout- params, more relevant for response validation.
 	$includedKeys = array_filter(array_keys($params), function ($key) {
 	return preg_match('/^checkout-/', $key);
@@ -1083,8 +1024,7 @@ public function calculateHmac($params = [], $body = '', $secretKey = '')
 		sort($includedKeys, SORT_STRING);
 
 		$hmacPayload = array_map(
-		function ($key) use ($params) 
-		{
+		function ($key) use ($params) {
 		  // Responses have headers in an array.
 		  $param = is_array($params[ $key ]) ? $params[ $key ][0] : $params[ $key ];
 		  return join(':', [ $key, $param ]);
@@ -1101,8 +1041,7 @@ public function calculateHmac($params = [], $body = '', $secretKey = '')
 		) 
 		{
 		  $hmac = calculateHmac($params, $body, $secretKey);
-		  if ($hmac !== $signature) 
-		  {
+		  if ($hmac !== $signature) {
 			throw new HmacException('HMAC signature is invalid.', 401);
 		  }
 		}	  
