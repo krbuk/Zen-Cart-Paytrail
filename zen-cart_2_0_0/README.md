@@ -17,4 +17,4 @@ Before account activation use test mode if Okay call to Paytrail customer servic
  * @license http://www.zen-cart.com/license/2_0.txt GNU Public License V2.0
  * @version $Id: Nida Verkkopalvelu (www.nida.fi) / Krbuk 2024 Aug 8 Modified in v2.0.0
  * The general VAT rate will increase from 24 percent to 25,5 percent on 01.09.2024. It now accepts decimals for VAT rates.
- * The general VAT rate for food was reduced from 14% to 13.5% effective January 1, 2026. Decimal numbers are now also accepted for VAT rates.
+ * The general VAT rate for food was reduced from 14 to 13.5 effective 01.01.2026. Decimal numbers are now also accepted for VAT rates.
