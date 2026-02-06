@@ -107,7 +107,7 @@ require DIR_FS_CATALOG .DIR_WS_CLASSES . 'vendors/paytrail/autoload.php';
     /**
      *  For API module version
      */
-    public $moduleVersion = '5.4.6';      
+    public $moduleVersion = '5.5.0';      
     /**
      * $allowed_currencies is the valid Paytrail currency to use default EUR
      * @var string
