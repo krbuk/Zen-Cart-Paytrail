@@ -1,0 +1,53 @@
+<?php
+
+/**
+ * Class CitPaymentRequest
+ */
+
+namespace Paytrail\SDK\Request;
+
+use Paytrail\SDK\Exception\ValidationException;
+use Paytrail\SDK\Interfaces\TokenPaymentRequestInterface;
+
+/**
+ * Class CitPaymentRequest
+ *
+ * This class is used to create a CIT payment request object for
+ * the Paytrail\SDK\Client class.
+ *
+ * @see https://paytrail.github.io/api-documentation/#/?id=request4
+ * @package Paytrail\SDK\Request
+ */
+class CitPaymentRequest extends AbstractPaymentRequest implements TokenPaymentRequestInterface
+{
+    /** @var string $token */
+    protected $token;
+
+    /**
+     * Validates properties and throws an exception for invalid values
+     *
+     * @throws ValidationException
+     */
+    public function validate()
+    {
+        $props = get_object_vars($this);
+
+        if (empty($props['token'])) {
+            throw new ValidationException('Token is empty');
+        }
+
+        return parent::validate();
+    }
+
+    public function setToken(string $token): TokenPaymentRequestInterface
+    {
+        $this->token = $token;
+
+        return $this;
+    }
+
+    public function getToken(): string
+    {
+        return $this->token;
+    }
+}

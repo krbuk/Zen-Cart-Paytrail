@@ -1,0 +1,1441 @@
+<?php
+
+/**
+ * www.paytrail.com (Finland)
+ * REQUIRES PHP version >= 8.4
+ * @copyright Copyright 2003-2025 Zen Cart Development Team
+ * @copyright Portions Copyright 2003 osCommerce
+ * @license   http://www.zen-cart.com/license/2_0.txt GNU Public License V2.0
+ * @version $Id: piloujp 2025 Oct 10 Modified in v2.2.2 $
+ * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2026 Jul 27 Modified in v5.6.0 
+ */
+
+// Paytrail module use vendors
+require DIR_FS_CATALOG .DIR_WS_CLASSES .'vendors/paytrail/autoload.php';
+
+/**
+ * @since ZC v1.0.3
+ */
+class paytrail extends base
+{
+        /**
+         * $_check is used to check the configuration key set up
+         *
+         * @var int
+         */
+        protected $_check;
+        /**
+         * $code determines the internal 'code' name used to designate "this" payment module
+         *
+         * @var string
+         */
+        public $code;
+        /**
+         * $description is a soft name for this payment method
+         *
+         * @var string
+         */
+        public $description;
+        /**
+         * $email_footer is the text to me placed in the footer of the email
+         *
+         * @var string
+         */
+        public $email_footer;
+        /**
+         * $enabled determines whether this module shows or not... during checkout.
+         *
+         * @var boolean
+         */
+        public $enabled;
+        /**
+         * $order_status is the order status to set after processing the payment
+         *
+         * @var int
+         */
+        public $order_status;
+        /**
+         * $title is the displayed name for this order total method
+         *
+         * @var string
+         */
+        public $title;
+        /**
+         * $sort_order is the order priority of this payment module when displayed
+         *
+         * @var int
+         */
+        public $sort_order;
+        /**
+         * Aggregate merchant ID Paytrail account ID
+         * @var string
+         */
+        protected $merchantId;
+        /**
+         * Aggregate secret key Paytrail Secret key
+         * @var string
+         */
+        protected $secretKey;
+        /**
+         * The Shop-in-Shop merchant ID
+         */
+        public $shop_in_shop_merchant_id;
+        /**
+         * The URL to process the payment for local processing payment successful
+         */
+        public $success_address;
+        /**
+         * The URL to process the payment for local processing payment cancel
+         */
+        public $cancel_address;
+        /**
+         * Card addition form language, currently supported are FI, SV, and EN
+         * alpha2
+         */
+        public $language;
+        /**
+         * order number
+         * numeric
+         */
+        public $order_number;
+        /**
+         * Payment amount in currency minor unit, e.g. cents. Maximum value of 99999999
+         * numeric
+         */ 
+        public $amount;
+        /**
+         * Http client timeout seconds
+         */
+        public $timeout = 1800;    
+        /**
+         * $form_action_url is the URL to process the payment or not set for local processing
+         * @var string
+         */
+        public $form_action_url; 
+        /**
+         * Assigned transaction ID for the payment
+         * @var string
+         */
+        public $transactionId;
+        /**
+         *  For API module version
+         */
+        public $moduleVersion = '5.6.0';      
+        /**
+         * $allowed_currencies is the valid Paytrail currency to use default EUR
+         * @var string
+         */
+        private $allowed_currencies = ['EUR'];
+        /**
+         * Currency
+         * @var alpha3
+         */
+        protected $mycurrency;
+        /**
+         * Platform name for the API.
+         * @var string
+         */
+        protected $platformName = 'zencart-2.2.2 - Nida Verkkopalvelu Oy';   
+
+// class constructor
+        function __construct()
+        {
+            global $order;
+
+            $this->code = 'paytrail';
+            $this->title = MODULE_PAYMENT_PAYTRAIL_TEXT_TITLE;
+            $this->description ='<strong>Paytrail version -v' . $this->moduleVersion . '</strong><br><br>' .MODULE_PAYMENT_PAYTRAIL_TEXT_DESCRIPTION;
+            $this->sort_order = defined('MODULE_PAYMENT_PAYTRAIL_SORT_ORDER') ? MODULE_PAYMENT_PAYTRAIL_SORT_ORDER : null;
+            $this->enabled = (defined('MODULE_PAYMENT_PAYTRAIL_STATUS') && MODULE_PAYMENT_PAYTRAIL_STATUS == 'true');
+            $this->form_action_url = 'https://services.paytrail.com/payments';
+            $this->merchantId = defined('MODULE_PAYMENT_PAYTRAIL_KAUPPIAS') ? MODULE_PAYMENT_PAYTRAIL_KAUPPIAS : null;
+            $this->secretKey = defined('MODULE_PAYMENT_PAYTRAIL_TURVA_AVAIN') ? MODULE_PAYMENT_PAYTRAIL_TURVA_AVAIN : null;			
+            $this->shop_in_shop_merchant_id = defined('MODULE_PAYMENT_PAYTRAIL_PAAMYYJA') ? MODULE_PAYMENT_PAYTRAIL_PAAMYYJA : null;
+            $this->language = ($_SESSION['languages_code'] == 'fi') ? 'FI' : 'EN';          
+            $this->success_address = zen_href_link(FILENAME_CHECKOUT_PROCESS, '', 'SSL');
+            $this->cancel_address = zen_href_link(FILENAME_CHECKOUT_PAYMENT, '', 'SSL');
+
+            if (null === $this->sort_order) {
+                return false;
+            }
+
+            if (IS_ADMIN_FLAG === true && (
+                (defined('MODULE_PAYMENT_PAYTRAIL_KAUPPIAS') && MODULE_PAYMENT_PAYTRAIL_KAUPPIAS == '375917') || 
+                (defined('MODULE_PAYMENT_PAYTRAIL_KAUPPIAS')  && MODULE_PAYMENT_PAYTRAIL_KAUPPIAS == '695861') || 
+                (defined('MODULE_PAYMENT_PAYTRAIL_PAAMYYJA')  && MODULE_PAYMENT_PAYTRAIL_PAAMYYJA == '695874')))  {
+                $this->title .= '<span class="alert">' .MODULE_PAYMENT_PAYTRAIL_ALERT_TEST .'</span>';
+            }
+
+            if ((int)MODULE_PAYMENT_PAYTRAIL_ORDER_STATUS_ID > 0) {
+                $this->order_status = MODULE_PAYMENT_PAYTRAIL_ORDER_STATUS_ID;
+            }
+
+            if (is_object($order)) {
+                $this->update_status();
+            }
+
+        }
+
+// class methods
+        /**
+         * @since ZC v1.0.3
+         */
+        function update_status()
+        {
+          
+            global $db, $order, $currencies, $currency;
+
+            if ($this->enabled && (int)MODULE_PAYMENT_PAYTRAIL_ZONE > 0 && isset($order->billing['country']['id'])) {
+                $check_flag = false;
+                $check = $db->Execute("select zone_id from " . TABLE_ZONES_TO_GEO_ZONES . " where geo_zone_id = '" . MODULE_PAYMENT_PAYTRAIL_ZONE . "' and zone_country_id = '" . (int)$order->billing['country']['id'] . "' order by zone_id");
+                while (!$check->EOF) {
+                    if ($check->fields['zone_id'] < 1) {
+                        $check_flag = true;
+                        break;
+                    } elseif ($check->fields['zone_id'] == $order->billing['zone_id']) {
+                        $check_flag = true;
+                        break;
+                    }
+                    $check->MoveNext();
+                }
+
+                if ($check_flag == false) {
+                    $this->enabled = false;
+                }
+            }
+          
+            // Disable the module if the order currency is not supported.
+            // Only EUR orders are accepted.
+            if ($this->enabled) {
+                $mycurrency = $order->info['currency'];
+                if (!in_array($mycurrency, $this->allowed_currencies, true)) {
+                  $this->enabled = false;
+                }
+            }          
+
+            // other status checks?
+            if ($this->enabled) {
+                // other checks here
+            }
+          
+        }
+
+        /**
+         * @since ZC v1.0.3
+         */
+        function javascript_validation()
+        {
+            return false;
+        }
+
+        /**
+         * @since ZC v1.0.3
+         */
+        function selection()
+        {
+            if(isset($_GET['checkout-status'])){
+                $status=$_GET['checkout-status'];
+
+                if(in_array($status,[
+                    'new',
+                    'pending',
+                    'fail',
+                    'delayed',
+                    'authorization-hold'
+                ])){
+                    $this->waitPage();
+                }
+            }
+
+            return [
+                'id'=>$this->code,
+                'module'=>$this->title
+            ];
+        }
+
+        /**
+         * @since ZC v1.0.3
+         */
+        function pre_confirmation_check()
+        {
+            return false;
+        }
+
+        /**
+         * @since ZC v1.0.3
+         */
+        function confirmation()
+        {
+            return ['title' => MODULE_PAYMENT_PAYTRAIL_TEXT_CHECKOUT];
+        }
+
+        /**
+         * @since ZC v1.0.3
+         */
+        function process_button()
+        {
+          global $db, $order, $currencies, $currency, $order_totals;
+          // ********************************
+          // ***       Paytrail           ***
+          // ********************************
+          //Create a randomized order number and order stamp'
+          $transactionId      = null;	
+          $terms              = '<a href="https://www.paytrail.com/kuluttaja/tietoa-maksamisesta">https://www.paytrail.com/kuluttaja/tietoa-maksamisesta</a>';
+          
+          // This order number random 
+          $prefix             = '78';  // The first two digits you specify
+          $this->order_number = $this->createOrderNumber($prefix);        
+
+          // Order amount 
+          $decimals     = $currencies->get_decimal_places($_SESSION['currency']);
+          $amount       = number_format($order->info['total'], 2, '.', '')*100;
+          $this->amount = intval($amount);
+
+          $body     = $this->getBody();          
+          $headers  = $this->getHeaders('POST');
+          $headers['signature'] = $this->calculateHmac($headers, $body, $this->secretKey);
+
+          $client   = new \GuzzleHttp\Client([ 'headers' => $headers ]);
+          $response = null;
+          try {
+            $response = $client->post($this->form_action_url, ['body' => $body]);
+          }
+          catch (\GuzzleHttp\Exception\ClientException $e) {
+            if ($e->hasResponse()) {
+              $response = $e->getResponse();
+              echo 	'<style>
+                      #btn_submit, .buttonRow  { display: none; } /*Submit button hidden */
+                      .btn-success { display: none; } /*Submit button hidden */
+                      .payment-providers { display: none; }
+                      .ms-auto { display: none; }
+                    </style>';
+              echo "Unexpected HTTP status code: {$response->getStatusCode()}\n\n";
+              echo "<div style='color:red'>" .MODULE_PAYMENT_PAYTRAIL_PAYMENT_ERROR;
+              echo "<br><strong>" .MODULE_PAYMENT_PAYTRAIL_SELECET_OTHER  ."</strong> &nbsp;";
+              echo "<div class='btn btn btn-outline-danger btn-sm'>".zen_back_link() . zen_image_button(BUTTON_IMAGE_BACK, BUTTON_BACK_ALT) . "</a></div></div>";
+              }
+          }
+
+          $responseBody = $response->getBody()->getContents();
+          
+          // Flatten Guzzle response headers
+          $responseHeaders = array_column(array_map(function ($key, $value) {
+              return [ $key, $value[0] ];
+          }, array_keys($response->getHeaders()), array_values($response->getHeaders())), 1, 0);
+
+          $responseHmac = $this->calculateHmac($responseHeaders, $responseBody, $this->secretKey);
+          if ($responseHmac !== $response->getHeader('signature')[0]) {
+              echo "Response HMAC signature mismatch!\n";
+              echo '<div style="color:red">'. MODULE_PAYMENT_PAYTRAIL_TEXT_API_ERROR .'</div>';
+          } else {
+            $decodedresponsebody = json_decode($responseBody);
+            /**
+            ** Error control	
+            ** Erase " // " and check to sending request data.
+            **/	
+            // transactionId : ee7b4465-520a-4180-ac6e-d6dc47d71104
+            // direct pay https://pay.paytrail.com/pay/ee7b4465-520a-4180-ac6e-d6dc47d71104
+            //echo $decodedresponsebody->href;
+            //echo '<br>' .'transactionId: '.$decodedresponsebody->transactionId; 
+            //echo '<br>' .'Request ID: ' .$response->getHeader('request-id')[0];
+            //echo '<br>' .(json_encode(json_decode($responseBody), JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES));
+            //echo '<br><pre>'; print_r(json_decode($body,true)); exit;
+          }
+
+          $decodedresponsebody = json_decode($responseBody);
+ 
+          if (isset($decodedresponsebody->transactionId)) {
+            $this->transactionId = $decodedresponsebody->transactionId;
+          }
+          
+          $provider_selection = MODULE_PAYMENT_PAYTRAIL_PAYMENT_PROVIDER;
+          // We are closing the current form.
+          $html  = "</form>\n";
+          // ************************************************************
+          // METHOD 1 IMPLEMENTATION (Guidance and Backup Submit Button)
+          // ************************************************************          
+          if ($provider_selection == '1') {
+          if (isset($decodedresponsebody->href) && !empty($decodedresponsebody->href)) {
+              $paytrail_url = $decodedresponsebody->href;
+              
+              $html .= '<style>
+                  .paytrail-redirect-container {
+                      text-align: center;
+                      margin: 30px auto;
+                      padding: 20px;
+                      max-width: 500px;
+                      border: 1px solid #ddd;
+                      border-radius: 8px;
+                      background-color: #f9f9f9;
+                  }
+                  .paytrail-submit-btn {
+                      display: inline-block;
+                      background-color: #0073e6;
+                      color: #ffffff !important;
+                      padding: 12px 30px;
+                      font-size: 16px;
+                      font-weight: bold;
+                      text-decoration: none !important;
+                      border-radius: 5px;
+                      border: none;
+                      cursor: pointer;
+                      transition: background 0.2s;
+                      margin-top: 15px;
+                      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                  }
+                  .paytrail-submit-btn:hover {
+                      background-color: #0059b3;
+                  }
+              </style>';
+
+              $html .= '<div class="paytrail-redirect-container">';
+              $html .= '  <p style="font-size: 15px; color: #333;">' . MODULE_PAYMENT_PAYTRAIL_TEXT_REDIRECTING . '</p>';
+              $html .= '  <p style="font-size: 13px; color: #666;">' .MODULE_PAYMENT_PAYTRAIL_TEXT_REDIRECTING_BUTTON .' </p>';
+              // A secure button that the user can click to proceed.
+              $html .= '  <a href="' . $paytrail_url . '" class="paytrail-submit-btn">'. MODULE_PAYMENT_PAYTRAIL_GO_TO_PAYTRAIL_PAGE .'</a>';
+              $html .= '</div>';
+              
+              // JS that automatically triggers the browser
+              $html .= '<script type="text/javascript">
+                  setTimeout(function() {
+                      window.location.href = "' . $paytrail_url . '";
+                  }, 500);  
+              </script>';
+          } else {
+              $html .= '<div style="color:red; text-align:center; margin: 20px;">' . MODULE_PAYMENT_PAYTRAIL_TEXT_API_ERROR . ' (Yönlendirme adresi alınamadı)</div>';
+          }
+          }
+          
+          // ************************************************************
+          // METHOD 2 IMPLEMENTATION (Guidance all payment button)
+          // ************************************************************
+          if ($provider_selection == '0') {
+          $html .='<style>
+                  #provider-group-switcher {
+                      width: 100%;
+                      height:auto;
+                  }
+                  .provider-group {
+                      float: left;
+                      margin-right: 8px;
+                      margin-bottom: 8px;
+                  }
+
+                  #apple-pay-button {
+                      display: none;
+                      -webkit-appearance: -apple-pay-button;
+                      -apple-pay-button-type: plain;
+                      -apple-pay-button-style: white-outline;
+                      height: 50px;
+                      width: 30%;
+                  }
+
+                  .button-content img {
+                      width:100px; 
+                      height:50px;"
+                  }
+                  #btn_submit, .buttonRow  { display: none; } /*Submit button hidden */
+                  .btn-success { display: none; } /*Submit button hidden */
+              </style>';
+            
+          $html .='<script src="http://resources.paytrail.com/libraries/paytrail.js"></script>';
+          $html .='<script>
+                const applePayButton = checkoutFinland.applePayButton;
+                 canMakePayment() checks that the user is on a Safari browser which supports Apple Pay.
+                if (applePayButton.canMakePayment()) 
+                {
+                   Mount the button to the element you created earlier, here e.g. #apple-pay-button.
+                  applePayButton.mount("#apple-pay-button", (redirectUrl) => 
+                    {
+                      setTimeout(() => {
+                      window.location.replace(redirectUrl);
+                    }, 1500);
+                });
+                }		
+              </script>';
+
+          // Provider payment group title	
+          $group_titles = [
+            'mobile'     => 'Mobile payment methods',
+            'bank'       => 'Bank payment methods', 
+            'creditcard' => 'Card payment methods', 
+            'credit'     => 'Invoice and instalment payment methods',
+          ];
+
+          $html .= '';
+          $html .= '<section class="payment-providers"><h2>' .MODULE_PAYMENT_PAYTRAIL_SELECET_PAYMENT .'</h2>';
+          $html .= !empty($decodedresponsebody->terms) ? $decodedresponsebody->terms : '';
+          $html .= '<div id="provider-group-switcher"><br>';
+
+          // Apple Pay Button
+          if (
+            isset($decodedresponsebody->customProviders) &&  // Check if the custom Providers feature exists.
+            isset($decodedresponsebody->customProviders->applepay) &&  // Check if Apple Pay is available.
+            isset($decodedresponsebody->customProviders->applepay->parameters) &&  // Check the existence of the parameters property.
+            $decodedresponsebody->customProviders->applepay->parameters > 0
+            ):
+
+            $html .= '<div id="apple-pay-button">';
+
+            foreach ($decodedresponsebody->customProviders->applepay->parameters as $parameter):
+              $html .= '<input type="hidden" name="'.$parameter->name .'" value="'.$parameter->value .'">';
+            endforeach;
+
+            $html .= '</div>';
+          endif;
+
+          // Provider payment group name, icon and id 
+          if (!empty($decodedresponsebody->groups) && is_iterable($decodedresponsebody->groups)) {
+            foreach ($decodedresponsebody->groups as $group) {
+              $groups[] = [
+                'id'  => $group->id,
+                'name'=> $group->name,
+                'icon'=> $group->icon,
+                'svg' => $group->svg
+              ];
+
+              $html .= '<div style="clear: both"></div>';	
+              $html .= '<img src="'.$group->icon .'" alt="'.$group->name .'" title="'.$group->name.'" style="width:24px; float:left; margin-bottom: 10px">' .'<h3 class="provider-group-header">&nbsp;' .$group->name .'</h3>';
+
+              // Provider name 
+              foreach ($decodedresponsebody->providers  as $providersmethods) {
+                $allPovidersMethods[] = [
+                  'url'         =>  $providersmethods->url,
+                  'icon'        =>  $providersmethods->icon,
+                  'svg'         =>  $providersmethods->svg,
+                  'name'        =>  $providersmethods->name,
+                  'group'       =>  $providersmethods->group,
+                  'id'          =>  $providersmethods->id,
+                  'parameters'  =>  $providersmethods->parameters
+                ];
+
+                // Selected provider id and group 
+                if ($group->id == $providersmethods->group) {
+                  $html .= '<div class="provider-group">';
+                  $html .= '<form action="' .$providersmethods->url .'" method="POST">';
+
+                  // Provider form filesds
+                  foreach ($providersmethods->parameters as $parameter) {
+                    $formFields[] = [
+                      'name'  =>  $parameter->name,
+                      'value' =>  $parameter->value,			
+                    ];
+
+                    $html .= '<input type="hidden" name="'.$parameter->name .'" value="'.$parameter->value .'">';
+                  } // end provider form filesds	
+
+                  $html .= '<button class="provider-button">';
+                  $html .= '<div class="button-content"><img src="'.$providersmethods->icon .'" alt="'.$providersmethods->id .'" title="'.$providersmethods->id .'"></div>';
+                  $html .= '</button>';
+                  $html .= '</form>';
+                  $html .= '</div>';
+                } // end  selected provider id and group 
+              } // end provider name 
+            } // end provider-group-header	
+          } else {
+            // Take action or log in case of error
+            echo '<div style="color:red">'. MODULE_PAYMENT_PAYTRAIL_TEXT_API_ERROR .'</div>';
+            error_log('Invalid or empty group data was received.');
+            }
+
+          $html .= '</div>
+          </section>';
+          }
+          $html .= '<div style="clear: both"></div>';
+          return $html;          
+        }
+
+        /**
+         * @since ZC v1.0.3
+         */
+        function before_process()
+        {
+            if (empty($_GET['checkout-status'])) {	
+              zen_redirect(zen_href_link(FILENAME_CHECKOUT_PAYMENT, '', 'SSL', true, false));				
+            }	 
+        }
+
+        /**
+         * @since ZC v1.0.3
+         */
+        function after_process()
+        {
+            // Adding the instructions to the Order Status History, will be visible but will not generate a new email.
+            global $insert_id, $db, $order, $messageStack;
+            
+            // It sends blank information to the order details.
+            $commentString = '';
+            zen_update_orders_history($insert_id, $commentString, "System", -1, 0);
+
+            $payment_status = array (
+              'new'     => MODULE_PAYMENT_PAYTRAIL_PAYMENT_NEW,
+              'ok'      => MODULE_PAYMENT_PAYTRAIL_PAYMENT_OK, 
+              'fail'    => MODULE_PAYMENT_PAYTRAIL_PAYMENT_FAIL, 
+              'pending' => MODULE_PAYMENT_PAYTRAIL_PAYMENT_PENDING, 
+              'delayed' => MODULE_PAYMENT_PAYTRAIL_PAYMENT_DELAYED,
+              'authorization-hold' => $_GET['checkout-transaction-id']
+            );		
+
+            if ($_GET['checkout-status'] == 'new' || 
+                $_GET['checkout-status'] == 'fail' || 
+                $_GET['checkout-status'] == 'pending' || 
+                $_GET['checkout-status'] == 'delayed') {
+              $error_message = MODULE_PAYMENT_PAYTRAIL_PAYMENT_ERROR;
+              zen_redirect(zen_href_link(FILENAME_CHECKOUT_PAYMENT, '', 'SSL'));
+              $messageStack->add_session('checkout_payment', $error_message, 'error');				
+            } 
+            else if ($_GET['checkout-status'] == 'ok')	{
+              // Update order history
+              $commentString = zen_db_prepare_input(MODULE_PAYMENT_PAYTRAIL_TITLE_STATUS .$payment_status[$_GET['checkout-status']] .MODULE_PAYMENT_PAYTRAIL_PAYMENT_METHOD .$_GET['checkout-provider'] . " , " .MODULE_PAYMENT_PAYTRAIL_REFERENCE_NUMBER .$_GET['checkout-reference'] . ".");
+              // Writing payment information to order status history	
+              zen_update_orders_history($insert_id, $commentString, null, $order->info['order_status'], 3);	
+            }
+            else {
+              zen_redirect(zen_href_link(FILENAME_CHECKOUT_PAYMENT, '', 'SSL'));  
+            }	          
+          
+            return false;
+        }
+
+        /**
+         * @since ZC v1.0.3
+         */
+        function get_error()
+        {
+            return false;
+        }
+
+        /**
+         * @since ZC v1.0.3
+         */
+        function check()
+        {
+            global $db;
+            if (!isset($this->_check)) {
+                $check_query = $db->Execute("select configuration_value from " . TABLE_CONFIGURATION . " where configuration_key = 'MODULE_PAYMENT_PAYTRAIL_STATUS'");
+                $this->_check = $check_query->RecordCount();
+            }
+
+            return $this->_check;
+        }
+
+        /**
+         * @since ZC v1.0.3
+         */
+        function install()
+        {
+            global $db, $messageStack;
+            if (defined('MODULE_PAYMENT_PAYTRAIL_STATUS')) {
+                  $messageStack->add_session(sprintf(TEXT_ERROR_MODULE_ALREADY_INSTALLED, $this->title), 'error');
+                  zen_redirect(zen_href_link(FILENAME_MODULES, 'set=payment&module=paytrail', 'NONSSL'));
+                  return 'failed';
+            }
+            $db->Execute("insert into " . TABLE_CONFIGURATION . " (configuration_title, configuration_key, configuration_value, configuration_description, configuration_group_id, sort_order, date_added) values ('Lajittelujärjestys', 'MODULE_PAYMENT_PAYTRAIL_SORT_ORDER', '0', 'Maksutavan lajittelujärjestys. Pienimmän luvun omaava on ylimpänä.', '6', '1', now())");
+            $db->Execute("insert into " . TABLE_CONFIGURATION . " (configuration_title, configuration_key, configuration_value, configuration_description, configuration_group_id, sort_order, set_function, date_added) values ('Ota käyttöön Paytrail', 'MODULE_PAYMENT_PAYTRAIL_STATUS', 'true', 'Otetaanko maksumoduuli käyttöön?', '6', '2', 'zen_cfg_select_option(array(\'true\', \'false\'), ', now())");
+            $db->Execute("insert into " . TABLE_CONFIGURATION . " (configuration_title, configuration_key, configuration_value, configuration_description, configuration_group_id, sort_order, date_added) values ('Kauppiastunnus', 'MODULE_PAYMENT_PAYTRAIL_KAUPPIAS', '375917', 'TEST kauppiastunnus: 375917 <br> Shop-in-Shop kauppiastunnus: 695861', '6', '3', now())");
+            $db->Execute("insert into " . TABLE_CONFIGURATION . " (configuration_title, configuration_key, configuration_value, configuration_description, configuration_group_id, sort_order, date_added) values ('Turva-avain', 'MODULE_PAYMENT_PAYTRAIL_TURVA_AVAIN', 'SAIPPUAKAUPPIAS', 'Normal merchant test turva-avain: SAIPPUAKAUPPIAS <br> Shop-in-Shop merchant test turva-avain: MONISAIPPUAKAUPPIAS', '6', '4', now())");
+            $db->Execute("insert into " . TABLE_CONFIGURATION . " (configuration_title, configuration_key, configuration_value, configuration_description, configuration_group_id, sort_order, date_added) values ('Myyjältä Myyjä kauppiastunnus', 'MODULE_PAYMENT_PAYTRAIL_PAAMYYJA', '', 'Test myyjältä myyjä kauppiastunnus: 695874', '6', '7', now())");
+            $db->Execute("insert into " . TABLE_CONFIGURATION . " (configuration_title, configuration_key, configuration_value, configuration_description, configuration_group_id, sort_order, set_function, date_added) values ('Maksupalveluntarjoajan valinta käyttöö', 'MODULE_PAYMENT_PAYTRAIL_PAYMENT_PROVIDER', '0', 'Ota maksupalveluntarjoajan valinta käyttöön omalla sivulla tai suora paytrailin sivulla?<br> 0 = omallla sivulla. <br>1 = suora mene paytrailin sivulla', '6', '8', 'zen_cfg_select_option(array(\'0\',\'1\'), ', now())");
+            $db->Execute("insert into " . TABLE_CONFIGURATION . " (configuration_title, configuration_key, configuration_value, configuration_description, configuration_group_id, sort_order, set_function, date_added) values ('Ota OP Lasku -laskin käyttöön', 'MODULE_PAYMENT_PAYTRAIL_PAYMENT_OP_INVOICE', 'True', 'Näytä OP Lasku -laskuri tuote- ja ostoskorisivulla.', '6', '9', 'zen_cfg_select_option(array(\'True\', \'False\'), ', now())"); 
+            $db->Execute("insert into " . TABLE_CONFIGURATION . " (configuration_title, configuration_key, configuration_value, configuration_description, configuration_group_id, sort_order, set_function, date_added) values ('Ota käyttöön laskun manuaalinen aktivointi', 'MODULE_PAYMENT_PAYTRAIL_PAYMENT_INVOICE_ACTIVATION', 'True', 'Tietyillä laskun maksutavoilla (Walley/Klarna) voit aktivoida laskun myöhemmin, esimerkiksi ennakkoon tilatuille tuotteille.<br>Aktivointiaika <br>Walley: Jopa 90 päivää <br>Klarna: Jopa 28 päivää', '6', '10', 'zen_cfg_select_option(array(\'True\', \'False\'), ', now())");           
+            $db->Execute("insert into " . TABLE_CONFIGURATION . " (configuration_title, configuration_key, configuration_value, configuration_description, configuration_group_id, sort_order, set_function, date_added) values ('Ota käyttöön yksittäiset selvitykset', 'MODULE_PAYMENT_PAYTRAIL_PAYMENT_INDIVIDUAL_SETTLEMENTS', 'True', 'Tämä asetus on pakollinen vain, jos käytät Paytrailissa tapahtumakohtaista selvitystä.', '6', '11', 'zen_cfg_select_option(array(\'True\', \'False\'), ', now())");             
+            $db->Execute("insert into " . TABLE_CONFIGURATION . " (configuration_title, configuration_key, configuration_value, configuration_description, configuration_group_id, sort_order, date_added) values ('Pankin viitenumeron etuliite', 'MODULE_PAYMENT_PAYTRAIL_BANK_REFERENCE_PREFIX', '10', 'Oletus 10', '6', '12', now())");          
+            $db->Execute("insert into " . TABLE_CONFIGURATION . " (configuration_title, configuration_key, configuration_value, configuration_description, configuration_group_id, sort_order, use_function, set_function, date_added) values ('Maksumoduulin voimassaoloalue', 'MODULE_PAYMENT_PAYTRAIL_ZONE', '0', 'Jos alue on valittu, käytä tätä maksutapaa vain valitun alueen ostotapahtumille..', '6', '13', 'zen_get_zone_class_title', 'zen_cfg_pull_down_zone_classes(', now())");
+            $db->Execute("insert into " . TABLE_CONFIGURATION . " (configuration_title, configuration_key, configuration_value, configuration_description, configuration_group_id, sort_order, set_function, use_function, date_added) values ('Tilauksen tila suoritetun maksun jälkeen', 'MODULE_PAYMENT_PAYTRAIL_ORDER_STATUS_ID', '2', 'Tilauksen tila maksun suorittamisen jälkeen:', '6', '14', 'zen_cfg_pull_down_order_statuses(', 'zen_get_order_status_name', now())");
+
+        }
+
+        /**
+         * @since ZC v1.0.3
+         */
+        function remove()
+        {
+            global $db;
+            $db->Execute("delete from " . TABLE_CONFIGURATION . " where configuration_key in ('" . implode("', '", $this->keys()) . "')");
+        }
+
+        /**
+         * @since ZC v1.0.3
+         */
+        function keys()
+        {
+            return [
+              'MODULE_PAYMENT_PAYTRAIL_SORT_ORDER', 
+              'MODULE_PAYMENT_PAYTRAIL_STATUS', 
+              'MODULE_PAYMENT_PAYTRAIL_KAUPPIAS', 
+              'MODULE_PAYMENT_PAYTRAIL_TURVA_AVAIN', 
+              'MODULE_PAYMENT_PAYTRAIL_PAAMYYJA',
+              'MODULE_PAYMENT_PAYTRAIL_PAYMENT_PROVIDER',
+              'MODULE_PAYMENT_PAYTRAIL_PAYMENT_OP_INVOICE',
+              'MODULE_PAYMENT_PAYTRAIL_PAYMENT_INVOICE_ACTIVATION',
+              'MODULE_PAYMENT_PAYTRAIL_PAYMENT_INDIVIDUAL_SETTLEMENTS',
+              'MODULE_PAYMENT_PAYTRAIL_BANK_REFERENCE_PREFIX',
+              'MODULE_PAYMENT_PAYTRAIL_ZONE', 
+              'MODULE_PAYMENT_PAYTRAIL_ORDER_STATUS_ID',
+             ];
+        }
+  
+        /**   
+        * ********************************  
+        *       Paytrail  Get Body
+		* @since Module  v5.6.0 
+        * ********************************	
+        */ 
+        public function getBody() 
+        {
+
+          global $order, $currencies, $db, $order_totals;
+
+          if (!isset($order->delivery['country']['iso_code_2'])) {
+            $order->delivery['street_address'] = $order->billing['street_address'];
+            $order->delivery['postcode'] = $order->billing['postcode'];
+            $order->delivery['city'] = $order->delivery['city'];
+            $order->delivery['state'] = $order->delivery['state'];
+            $order->delivery['country']['iso_code_2'] = $order->billing['country']['iso_code_2'];
+          }
+
+        // deliveryAddress If delivery state is null or emty
+        $deliverystate = isset($order->delivery['state']) ? $order->delivery['state'] : '';
+        $delivery_state = substr($deliverystate, 0, 10);
+
+        // invoicingAddress If delivery state is null or emty
+        $billingstate = isset($order->billing['state']) ? $order->billing['state'] : '';
+        $billing_state = substr($billingstate, 0, 10);
+        $mycurrency = $order->info['currency'];
+
+        $body_request_data = [
+          'stamp' 	  => $this->generate_uuid(),
+          'reference' => $this->order_number,
+          'amount'    => $this->amount,
+          'currency'  => $mycurrency,
+          'language'  => $this->language,
+          'items'     => $this->getOrderItems($order),
+          'customer' => [
+            'firstName'  => $order->customer['firstname'],
+            'lastName'   => $order->customer['lastname'],
+            'phone'      => $order->customer['telephone'],
+            'email'      => $order->customer['email_address'],
+            'vatId'      => '',
+            'companyName'=> $order->customer['company'],
+            ],
+          'deliveryAddress' =>  [
+            'streetAddress' =>  trim(substr($order->delivery['street_address'],0,50)),
+            'postalCode' 	=>  trim(substr($order->delivery['postcode'],0,5)),
+            'city' 			=> trim(substr($order->delivery['city'],0,18)),
+            'county' 		=> $delivery_state,
+            'country' 		=> $order->delivery['country']['iso_code_2'],					
+            ],
+          'invoicingAddress' =>  [
+            'streetAddress' => trim(substr($order->billing['street_address'],0,50)),
+            'postalCode' 	=> trim(substr($order->billing['postcode'],0,5)),
+            'city' 			=> trim(substr($order->billing['city'],0,18)),
+            'county' 		=> $billing_state,
+            'country' 		=> $order->billing['country']['iso_code_2'],					
+            ],
+          'manualInvoiceActivation' => true,
+          'redirectUrls' => [
+            'success' => $this->success_address,
+            'cancel' => $this->cancel_address,
+            ],
+          'callbackUrls' => [
+            'success' => $this->success_address,
+            'cancel' => $this->cancel_address,
+            ],
+          'callbackDelay' => 20,
+          ];
+          
+          // The json_encoding process in your current code continues from here:
+          $body = json_encode($body_request_data, JSON_UNESCAPED_SLASHES);
+			
+          return $body;
+        }
+
+        // Get Headers
+        protected function getHeaders(string $method, $transactionId = null) 
+        {
+          //$datetime = new \DateTime();
+          $headers = ['checkout-account'        => $this->merchantId,
+                      'checkout-algorithm'      => 'sha256',
+                      'checkout-method'         => strtoupper($method),
+                      'checkout-nonce'          => bin2hex(random_bytes(16)),
+                      'checkout-timestamp'      => gmdate('Y-m-d\TH:i:s\Z'),
+                      'platform-name'           => $this->platformName,
+                      'content-type'            => 'application/json; charset=utf-8'
+                     ];
+          
+          // Required only for POST requests.
+          if (strtoupper($method) == 'POST') {
+              $headers['checkout-reference']      = $this->order_number;
+              $headers['checkout-transaction-id'] = $this->transactionId;
+          }          
+          
+          if($method == 'GET' && !empty($transactionId))
+          {
+              $headers['checkout-transaction-id'] = $transactionId;
+          }          
+          // If you want to send the transactionId in the GET query
+          if (!empty($transactionId)) {
+            $headers['checkout-transaction-id'] = $transactionId;
+          }
+          return $headers;
+        }	
+ 
+        public function getOrderItems($order) 
+        {
+          $items = [];	
+          // Normal payment item	
+          if (empty($this->shop_in_shop_merchant_id)) {	
+            foreach ($this->itemArgs($order) as $key => $item) {
+              $items[] = [
+                'unitPrice'    => intval($item['price']),
+                'units'        => $item['qty'],
+                'vatPercentage'=> (float)number_format($item['vat'], 1, '.', ''),
+                'productCode'  => $item['code'],
+                'description'  => $item['title'],
+                'category'     => '',
+              ];				
+            }			  
+          }	
+
+          // shop-in-shop payment item request 
+          else {
+            foreach ($this->itemArgs($order) as $key => $item) {
+              $items[] = [
+                'unitPrice'    => intval($item['price']),
+                'units'        => $item['qty'],
+                'vatPercentage'=> (float)number_format($item['vat'], 1, '.', ''),
+                'productCode'  => $item['code'],
+                'description'  => $item['title'],
+                'category'     => '',
+                'stamp'        => $this->generate_uuid(),
+                'reference'    => $this->order_number,				  
+                'merchant'     => $this->shop_in_shop_merchant_id,				  
+                'commission'   => [
+                  'merchant' => $this->shop_in_shop_merchant_id,
+                  'amount'   => intval($item['price'] / 10),
+                  ],	
+              ];			
+            }		
+          }		
+          return $items;
+        }
+
+		// Start itemArgs($order)
+        public function itemArgs($order) 
+        {
+            global $order, $currencies, $db, $order_totals;
+
+            //Add product breakdown
+            $decimals = $currencies->get_decimal_places($_SESSION['currency']);
+            $order_subtotal  = zen_round($order->info['subtotal'], 2);
+
+            //Variable to compare product calculation to total amount of the order		
+            $total_check = 0;
+            $itemqyt     = null;
+
+            // Array order items, tax  and price
+            $items = array();	
+
+            foreach ($order->products as $key => $item) {
+              $item_final_price = number_format($item['final_price'], 2, '.', '')*100;	
+              //$item_final_price = $item['final_price'] *100 ;
+              $item_tax = $item['tax'];
+              $item_price = round($item_final_price * ($item_tax/100+1));		
+              $itemqyt += $item['qty'];
+              $total_check  +=  $item_price * $item['qty'];
+              if ($order_subtotal == 0) {
+                $items[] = [
+                  'title' => $item['name'],
+                  'code' => $item['model'],
+                  'category' => '',
+                  'qty' => floatval($item['qty']),
+                  'price' => 0,
+                  'vat' => 0,
+                  'discount' => 0,
+                  'type' => 1,
+                  ];
+              }
+              else {
+                $items[] = [
+                  'title' => $item['name'],
+                  'code' => $item['model'],
+                  'category' => '',
+                  'qty' => floatval($item['qty']),
+                  'price' => intval($item_price),
+                  'vat' => $item_tax,
+                  'discount' => 0,
+                  'type' => 1,
+                  ];
+              }
+            }
+
+            //Add shipping to product breakdown
+            $shipping_price     =  $order->info['shipping_cost'];	
+
+            $shipping_tax_total = $order->info['shipping_tax'];
+
+            if (($shipping_price - $shipping_tax_total) != 0) {
+                 $shipping_tax = ($shipping_tax_total / ($shipping_price - $shipping_tax_total)) * 100;
+            } else {
+				// Handle the case where the denominator is zero
+				$shipping_tax = 0; // or another appropriate value or error handling
+              }
+
+            if (DISPLAY_PRICE_WITH_TAX == 'true') {
+              $shipping_price = $shipping_price;
+            } 
+            else {
+				$shipping_price = $shipping_price + $shipping_tax_total;
+            }		
+
+            if($shipping_price > 0 ) {
+			$shipping_price = number_format($shipping_price, 2, '.', '')*100;
+            $items[] = [
+              'title'     => $order->info['shipping_method'],
+              'code'      => $order->info['shipping_module_code'].'',
+              'qty'       => 1,
+              'price'     => $shipping_price,
+              'vat'       => $shipping_tax,
+              'discount'  => 0,
+              'type'      => 2,
+              ];	
+            $total_check += $shipping_price; 	
+            }
+
+            //Add storepickup dicount
+            $storepickup_discount = $order->info['shipping_cost'];
+            if ($storepickup_discount < 0) {
+            $storepickup_discount_price = abs($order->info['shipping_cost']) * 100;
+            $items[] = [
+              'title'     => $order->info['shipping_method'],
+              'code'      => $order->info['shipping_module_code'].'',
+              'qty'       => -1,
+              'price'     => $storepickup_discount_price,
+              'vat'       => 0,
+              'discount'  => 0,
+              'type'      => 4,
+              ];	
+            $total_check -= $storepickup_discount_price; 
+            }
+
+            // Add loworderfee breakdown
+            // Check if there is a group discount enabled
+            $discount_amount_shipping = 0; 	
+            foreach ($order_totals as $o_total) {
+              if(isset($o_total['code']) && $o_total['code'] == 'ot_loworderfee') {
+                if(isset($o_total['value']) && $o_total['value'] > 0) {
+                  $query = "select * from " . TABLE_CONFIGURATION . " where configuration_key='MODULE_ORDER_TOTAL_LOWORDERFEE_TAX_CLASS'";
+                  $loworder_tax = $db->Execute($query);
+                  $loworder_tax_rate = zen_get_tax_rate($loworder_tax->fields['configuration_value'], $order->billing['country']['id'], $order->billing['zone_id']);
+                  $loworder_price_format = number_format($o_total['value'], 2, '.', '') * 100;
+                  if (DISPLAY_PRICE_WITH_TAX == 'true') {
+                    $loworderpretax_price = $loworder_price_format;
+                    } else {
+                        $loworderpretax_price =  ($loworder_price_format / ($loworder_tax_rate/100+1)) * 100;
+                      }
+                  $items[] = [
+                    'title'     => MODULE_PAYMENT_PAYTRAIL_LOWORDER_TEXT,
+                    'code'      => '',
+                    'qty'       => 1,
+                    'price'     => $loworderpretax_price,
+                    'vat'       => $loworder_tax_rate,
+                    'discount'  => 0,
+                    'type'      => 1,
+                    ];
+                  $total_check += $loworderpretax_price;
+                }
+              }
+              if(isset($o_total['code']) && $o_total['code'] == 'ot_subtotal') {
+                if(isset($o_total['value']) && $o_total['value'] > 0) {
+                  $order_total_sub_total = $o_total['value'];
+                }
+              }			
+
+              //Add group discount pricing breakdown
+              if($o_total['code'] == 'ot_group_pricing') {
+                if($o_total['value'] > 0) {
+                  $group_amount_format = number_format($o_total['value'], 2, '.', '') * 100;
+                  if (DISPLAY_PRICE_WITH_TAX == 'true') {
+                          $group_amount = round(floatval($group_amount_format));
+                        }
+                        else {
+                          $group_amount = round(floatval($group_amount_format + $order_total_sub_total));
+                        }				
+                  $items[] = [
+                    'title'     => MODULE_PAYMENT_PAYTRAIL_GROUP_TEXT,
+                    'code'      => '',
+                    'qty'       => -1,
+                    'price'     => intval($group_amount),
+                    'vat'       => 0,
+                    'discount'  => 0,
+                    'type'      => 4,
+                    ];			
+                  $total_check -= $group_amount;					
+                }
+              }
+              else if(isset($o_total['code']) && $o_total['code'] == 'ot_shipping') {
+                if(isset($o_total['value']) && $o_total['value'] > 0) {
+                  $discount_amount_shipping = $o_total['value'];
+                } else { 
+                    $discount_amount_shipping = 0; 
+                  }
+              }
+              else if(isset($o_total['code']) && $o_total['code'] == 'ot_group_pricing') {
+                if(isset($o_total['value']) && $o_total['value'] > 0) {
+                    $group_discount_amount = $o_total['value'];
+                }
+              }
+              else if(isset($o_total['code']) && $o_total['code'] == 'ot_coupon') {
+                if(isset($o_total['value']) && $o_total['value'] > 0) {
+                    $coupon_amount = $o_total['value'];
+                }
+              }
+              else if(isset($o_total['code']) && $o_total['code'] == 'ot_tax') {
+                if(isset($o_total['value']) && $o_total['value'] > 0) {
+                    $shiping_ot_tax = $o_total['value'];
+                }
+              }
+              else if(isset($o_total['code']) && $o_total['code'] == 'ot_total') {
+                if(isset($o_total['value']) && $o_total['value'] > 0) {
+                    $total_amount = number_format($o_total['value'], 2, '.', '') * 100;
+                }
+              }	
+            } 
+			// End loworderfee breakdown
+
+            //Add coupon breakdown
+            $coupon_amount = isset($coupon_amount) ? $coupon_amount : 0;
+            $coupon_amount_shipping = 0;	
+            if (abs(isset($_SESSION['cc_id']))) {
+                $sql = "select * 
+                        from " . TABLE_COUPONS . " c,
+                            " . TABLE_COUPONS_DESCRIPTION . " cd,
+                            " . TABLE_TAX_RATES . " tr 
+                        where c.coupon_id=:couponID: and coupon_active='Y' 
+                        and c.coupon_id = cd.coupon_id	";
+                $sql = $db->bindVars($sql, ':couponID:', $_SESSION['cc_id'], 'integer');
+
+                $coupon = $db->Execute($sql);
+                $coupon_product_count	= $coupon->fields['coupon_product_count'];
+                $coupon_tax_rate			= $coupon->fields['tax_rate'];
+                $coupon_code				= $coupon->fields['coupon_code'].'';
+                $coupon_amount_formatted = number_format((float)$coupon_amount, 2, '.', '');
+                $coupon_shipping_tax		= zen_round($shipping_tax, $decimals) * 100 ;
+                $coupon_amount_shipping	= $discount_amount_shipping * 100;
+
+                if (DISPLAY_PRICE_WITH_TAX == 'true') {
+                    $coupon_amount = $coupon_amount_formatted * 100;
+                } else {
+                    $coupon_amount = $coupon->fields['coupon_amount'];
+                }
+
+                // Variable to compare product discount calculation to total amount of the order
+                $coupon_result = 0;	
+                switch ($coupon->fields['coupon_type']) {
+                // case 'S': // shipping
+                // $coupon_result = $coupon_tax_amount ;		
+                //	break;
+                case 'F': // unit amount
+                    // One by one  unit amount total
+                    if ($coupon_product_count == 1) {
+                        $coupon_result = $coupon_amount * $itemqyt * 100;
+                    } else {
+                        $coupon_result = $coupon_amount;
+                    }
+                break;
+
+                // amount off and free shipping	
+                case 'O': 
+                $coupon_amount_shipping = $discount_amount_shipping * 100;
+                $O_shippingprice = $coupon_amount_shipping +  $coupon_shipping_tax;
+                // One by one  unit amount total					
+                if ($coupon_product_count == 1) {
+                    $coupon_amount = $coupon_amount * 100 * $itemqyt;
+                    $coupon_amount_shipping = $discount_amount_shipping * 100;
+                    $coupon_result = $coupon_amount + $coupon_amount_shipping;
+                } else {
+                    $coupon_result = ($coupon_amount_formatted + $discount_amount_shipping) * 100;
+                  }
+
+                $items[] = [
+					'title'    => MODULE_PAYMENT_PAYTRAIL_FREE_SHPING,
+                   	'code'     => '',
+                   	'qty'      => 1,
+                   	'price'    => $O_shippingprice,
+                   	'vat'      => 0,
+                   	'discount' => 0,
+                   	'type'     => 2,
+				];
+
+                $total_check += $O_shippingprice;
+                break;
+
+				// percentage	
+                case 'P': 
+                if($shippingcost > 0 ) {
+                   // Coupon cost
+                   $coupon_cost = ($order_subtotal/100)*($coupon_amount);
+                   // add shiping cost and shping tax
+                   $coupon_shiping_tax = ($shippingcost/100)*($coupon_amount);
+                   $coupon_result =  ($coupon_cost + $coupon_shiping_tax) ;
+                   $coupon_result = zen_round($coupon_result, $decimals) * 100;
+                } else {
+                   $coupon_result = ($order_subtotal/100)*($coupon_amount_formatted);
+                   $coupon_result = zen_round($coupon_result, $decimals) * 100;
+                  }
+                break;
+
+                // percentage and Free Shipping
+                case 'E':
+                if (isset($coupon_amount_shipping) == 0) {
+                  $coupon_amount_shipping = 1;
+                }
+
+              	$E_shipping_tax_cost  = zen_round($shiping_ot_tax, $decimals) * 100;
+              	$E_shipping_price     = $coupon_amount_shipping + $E_shipping_tax_cost ;
+              	$E_shipping_tax       = ($E_shipping_tax_cost/$coupon_amount_shipping)* 100 ;
+              	$coupon_cost          = (($order_subtotal + $discount_amount_shipping)/100) * ($coupon_amount_formatted);
+              	$coupon_result        = ($coupon_cost + $discount_amount_shipping);
+              	$coupon_result        = zen_round($coupon_result, $decimals) * 100;
+
+              	$items[] = [
+					'title'     => MODULE_PAYMENT_PAYTRAIL_FREE_SHPING,
+                	'code'      => '',
+                	'qty'       => 1,
+                	'price'     => $E_shipping_price,
+					'vat'       => $E_shipping_tax,
+                	'discount'  => 0,
+                	'type'      => 2,
+				];	
+              	$total_check += $E_shipping_price;	
+                break;				
+				} // end switch
+
+             	$items[] = [
+					'title'    => MODULE_PAYMENT_PAYTRAIL_COUPON_TEXT,
+					'code'     => $coupon_code,
+					'qty'      => -1,
+					'price'    => $coupon_result,
+					'vat'      => 0,
+					'discount' => 0,
+					'type'     => 4,
+				];
+             	$total_check -= $coupon_result;
+                }
+				// End coupon breakdown
+
+				// Add Gift Voucher breakdown
+				if ($_SESSION['cot_gv'] > 0) {
+					$gv_query = "select *
+								from " . TABLE_COUPON_GV_CUSTOMER . " 
+								where customer_id = '" . $_SESSION['customer_id'] . "'";
+					$gv_order = $db->Execute($gv_query);
+
+					// Gift amonut total	
+					$gv_order_amount = number_format($gv_order->fields['amount'], 2, '.', '') .'€';
+					$gv_amount = $_SESSION['cot_gv'] * 100;
+
+					// if tax is to be calculated on purchased GVs, calculate it
+					$items[] = [
+					  'title'     => MODULE_PAYMENT_PAYTRAIL_GIFT_TEXT,
+					  'code'      => $gv_order_amount,
+					  'qty'       => -1,
+					  'price'     => $gv_amount,
+					  'vat'       => 0,
+					  'discount'  => 0,
+					  'type'      => 4,
+					  ];
+					$total_check -= $gv_amount;
+				}
+
+				// Add reward points breakdown
+				if (array_key_exists('redeem_points', $_SESSION)) {
+					$redeemPoints = $_SESSION['redeem_points'];
+				} else {
+					$redeemPoints = 0; // Reward Point not aktif
+				}
+
+				// Add reward points breakdown
+				if ($redeemPoints > 0) {
+				  $redem_value = number_format((float)$redeemPoints, 2, '.', '');
+				  // if tax is to be calculated on purchased GVs, calculate it
+				  $items[] = [
+					'title'     => MODULE_PAYMENT_PAYTRAIL_REWARD_POINT_TEXT,
+					'code'      => '',
+					'qty'       => -1,
+					'price'     => $redem_value,
+					'vat'       => 0,
+					'discount'  => 0,
+					'type'      => 4,
+					];
+				  $total_check -= $redem_value;
+				}		
+
+				// Add sumround breakdown
+				if ($this->amount <> $total_check) {
+				  if ($this->amount > $total_check) {
+					  $sum_round_count = $this->amount - $total_check;
+					  $qty = 1;
+				  }
+
+				  if ($total_check > $this->amount) {
+					  $sum_round_count = $total_check - $this->amount;
+					  $qty = -1;
+				  }
+				  $sum_round = round(floatval($sum_round_count));
+				  $items[] = [
+					'title'     => MODULE_PAYMENT_PAYTRAIL_SUM_ROUND,
+					'code'      => '',
+					'qty'       => $qty,
+					'price'     => $sum_round,
+					'vat'       => 0,
+					'discount'  => 0,
+					'type'      => 1,
+					];
+				}
+				return $items;
+        } 
+		// end itemArgs($order)
+
+		// Stamp random trans id
+		public function generate_uuid() 
+		{
+			return sprintf('%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
+						   mt_rand( 0, 0xffff ), mt_rand( 0, 0xffff ),
+						   mt_rand( 0, 0xffff ),
+						   mt_rand( 0, 0x0C2f ) | 0x4000,
+						   mt_rand( 0, 0x3fff ) | 0x8000,
+						   mt_rand( 0, 0x2Aff ), mt_rand( 0, 0xffD3 ), mt_rand( 0, 0xff4B )
+						);
+		}
+
+        // Order number and Reference Number
+        public function createOrderNumber(string $prefix): string
+        {
+            $random = str_pad((string) random_int(0, 99999999999), 12, '0', STR_PAD_LEFT);            
+            return $prefix . $random;
+        }
+
+        public function calculateHmac($params = [], $body = '', $secretKey = '') 
+		{
+           // Keep only checkout- params, more relevant for response validation.
+           $includedKeys = array_filter(array_keys($params), function ($key) {
+           return preg_match('/^checkout-/', $key);
+           });
+
+           // Keys must be sorted alphabetically
+           sort($includedKeys, SORT_STRING);
+
+            $hmacPayload = array_map(
+            function ($key) use ($params) {
+              // Responses have headers in an array.
+              $param = is_array($params[ $key ]) ? $params[ $key ][0] : $params[ $key ];
+              return join(':', [ $key, $param ]);
+            }, $includedKeys );
+            array_push($hmacPayload, $body);
+            return hash_hmac('sha256', join("\n", $hmacPayload), $secretKey);		
+        }
+
+        public function validateHmac(array $params = [], string $body = '', string $signature = '', string $secretKey = '') 
+		{
+           $hmac = $this->calculateHmac($params, $body, $secretKey);  
+           if ($hmac !== $signature) {
+               throw new HmacException('HMAC signature is invalid.', 401);
+           }
+        }	
+  
+        /**
+        * Get Paytrail payment status
+        */
+        public function getPaymentStatus($transactionId) {
+            $url = $this->form_action_url . '/' . $transactionId;
+            $headers = $this->getHeaders('GET',$transactionId);
+
+            $headers['signature'] = $this->calculateHmac($headers,'',$this->secretKey);
+
+            $client = new \GuzzleHttp\Client([
+                'headers'=>$headers
+            ]);
+
+            try {
+                $response = $client->get($url);
+
+                return json_decode($response->getBody()->getContents(), true);
+
+            } catch(\Exception $e){
+                error_log("Paytrail status error: ".$e->getMessage());
+
+                return false;
+            }
+        } 
+	
+        /**
+         * Paytrail waiting page for payment status 
+         */
+        public function waitPage()
+        {
+            $transactionId = zen_db_prepare_input(
+                $_GET['checkout-transaction-id'] ?? ''
+            );
+
+            $transactionIdJs = json_encode(
+                $transactionId,
+                JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT
+            );
+
+            $successAddressJs = json_encode(
+                $this->success_address,
+                JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT
+            );
+
+            $cancelAddressJs = json_encode(
+                $this->cancel_address,
+                JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT
+            );
+
+            echo '
+            <!DOCTYPE html>
+            <html lang="tr">
+            <head>
+                <meta charset="utf-8">
+                <title>' .MODULE_PAYMENT_PAYTRAIL_PAYMENT_STATUS_TITLE .'</title>
+                <style>
+                    body {
+                        font-family: Arial, Helvetica, sans-serif;
+                        background: #f5f5f5;
+                        text-align: center;
+                        margin-top: 120px;
+                    }
+
+                    .box {
+                        width: 500px;
+                        margin: auto;
+                        padding: 30px;
+                        background: #fff;
+                        border-radius: 8px;
+                        box-shadow: 0 0 10px rgba(0, 0, 0, .15);
+                    }
+
+                    #counter {
+                        font-size: 42px;
+                        font-weight: bold;
+                        color: #0073aa;
+                        margin-top: 20px;
+                    }
+
+                    .retry-button {
+                        margin-top: 15px;
+                        padding: 10px 20px;
+                        border: 0;
+                        border-radius: 5px;
+                        background: #0073aa;
+                        color: #fff;
+                        font-size: 16px;
+                        cursor: pointer;
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="box">
+                    <h2>' .MODULE_PAYMENT_PAYTRAIL_RETURN_PAYMENT_CHECKING .'</h2>
+                    <p>'. MODULE_PAYMENT_PAYTRAIL_RETURN_PAYMENT_CHECKING_INFO .'</p>
+                    <div id="counter">40</div>
+                </div>
+
+                <script>
+                    const transactionId = ' . $transactionIdJs . ';
+                    const successAddress = ' . $successAddressJs . ';
+                    const cancelAddress = ' . $cancelAddressJs . ';
+
+                    let second = 40;
+                    let checking = false;
+                    let finished = false;
+
+                    function showFailMessage() {
+                        finished = true;
+
+                        document.querySelector(".box").innerHTML =
+                            "<h2>'.MODULE_PAYMENT_PAYTRAIL_RETURN_PAYMENT_FAIL .'</h2>" +
+                            "<p>' .MODULE_PAYMENT_PAYTRAIL_RETURN_PAYMENT_FAIL_INFO .'</p>" +
+                            \'<button type="button" class="retry-button" id="retryPayment">' .MODULE_PAYMENT_PAYTRAIL_RETURN_PAYMENT_SELECT_BUTTON .'</button>\';
+
+                        document.querySelector("#retryPayment").addEventListener(
+                            "click",
+                            function () {
+                                window.location.href = cancelAddress;
+                            }
+                        );
+                    }
+
+                    function checkStatus(finalCheck = false) {
+                        if (checking || finished) {
+                            return;
+                        }
+
+                        checking = true;
+
+                        fetch(
+                            "index.php?main_page=paytrail_status&transactionId=" +
+                            encodeURIComponent(transactionId)
+                        )
+                        .then(function (response) {
+                            return response.json();
+                        })
+                        .then(function (data) {
+                            console.log(data);
+
+                            if (data["checkout-status"] === "ok") {
+                                finished = true;
+                                window.location.href = successAddress;
+                                return;
+                            }
+
+                            // If the final check is also unsuccessful, display the error screen.
+                            if (finalCheck) {
+                                showFailMessage();
+                            }
+                        })
+                        .catch(function (error) {
+                            console.log("Paytrail AJAX ERROR:", error);
+
+                            if (finalCheck) {
+                                showFailMessage();
+                            }
+                        })
+                        .finally(function () {
+                            checking = false;
+                        });
+                    }
+
+                    // The first check is performed as soon as the page opens.
+                    checkStatus();
+
+                    const timer = setInterval(function () {
+                        if (finished) {
+                            clearInterval(timer);
+                            return;
+                        }
+
+                        second--;
+                        document.getElementById("counter").innerHTML = second;
+
+                        // 10, 20, 30, 40 ve 50. it is checked in seconds.
+                        if (second > 0 && second % 10 === 0) {
+                            checkStatus();
+                        }
+
+                        // 60 it is checked one last time at the end of the seconds.
+                        if (second <= 0) {
+                            clearInterval(timer);
+                            checkStatus(true);
+                        }
+                    }, 1000);
+                </script>
+            </body>
+            </html>
+            ';
+
+            exit;
+        }
+
+} // end class paytrail

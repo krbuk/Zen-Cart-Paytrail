@@ -1,0 +1,46 @@
+name: Run Checks
+
+on:
+  - push
+  - pull_request
+  - fork
+
+jobs:
+  run-checks:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      matrix:
+        php-version: ['7.3', '7.4', '8.0', '8.1', '8.2', '8.3', '8.4', '8.5']
+        experimental: [false]
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Validate Composer Files
+        run: composer validate --strict
+
+      - name: Run composer install
+        uses: php-actions/composer@v6
+        with:
+          php_version: ${{ matrix.php-version }}
+
+      - name: Run linter
+        run: composer lint
+
+      - name: Run phpstan
+        uses: php-actions/phpstan@v3
+        with:
+          php_version: ${{ matrix.php-version }}
+          version: composer
+          configuration: phpstan.neon
+          memory_limit: 256M
+
+      - name: Run tests
+        uses: php-actions/phpunit@v3
+        with:
+          php_version: ${{ matrix.php-version }}
+          version: 9
+          configuration: phpunit.xml
