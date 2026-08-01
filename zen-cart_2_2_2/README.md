@@ -17,6 +17,7 @@ Before account activation use test mode if Okay call to Paytrail customer servic
  * @license http://www.zen-cart.com/license/2_0.txt GNU Public License V2.0
  * @version $Id: Nida Verkkopalvelu (www.nida.fi) / Krbuk 2024 Aug 8 Modified in v2.2.2
  * Providers selection in checkout page or redirect to paytrail payment page
+ * If the status is fail, pending, or delayed when the payment process is initiated, use Ajax payment status checking 40sn inside every 10sn.
  *
  * Adding (tokenizing) cards (coming soon)
  * Klarna (coming soon)
