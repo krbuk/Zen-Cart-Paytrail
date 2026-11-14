@@ -7,7 +7,7 @@
  * @copyright Portions Copyright 2003 osCommerce
  * @license   http://www.zen-cart.com/license/2_0.txt GNU Public License V2.0
  * @version $Id: piloujp 2025 Oct 10 Modified in v2.2.2 $
- * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2026 Jul 27 Modified in v5.6.0 
+ * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2026 Nov 14 Modified in v5.7.0 (card tokenization, 30s status check)
  */
 
 // Paytrail module use vendors
@@ -120,7 +120,7 @@ class paytrail extends base
         /**
          *  For API module version
          */
-        public $moduleVersion = '5.6.0';      
+        public $moduleVersion = '5.7.0';      
         /**
          * $allowed_currencies is the valid Paytrail currency to use default EUR
          * @var string
@@ -136,6 +136,23 @@ class paytrail extends base
          * @var string
          */
         protected $platformName = 'zencart-2.2.2 - Nida Verkkopalvelu Oy';   
+        /**
+         * Paytrail API base URL
+         */
+        protected $apiBase = 'https://services.paytrail.com';
+        /**
+         * Verified payment result (filled in before_process, used in after_process)
+         * @var array
+         */
+        protected $paymentResult = [];
+        /**
+         * Saved (tokenized) cards table
+         */
+        protected $cardsTable;
+        /**
+         * Payment status wait time in seconds (status checked every 10 seconds)
+         */
+        public $statusWaitSeconds = 30;
 
 // class constructor
         function __construct()
@@ -151,9 +168,16 @@ class paytrail extends base
             $this->merchantId = defined('MODULE_PAYMENT_PAYTRAIL_KAUPPIAS') ? MODULE_PAYMENT_PAYTRAIL_KAUPPIAS : null;
             $this->secretKey = defined('MODULE_PAYMENT_PAYTRAIL_TURVA_AVAIN') ? MODULE_PAYMENT_PAYTRAIL_TURVA_AVAIN : null;			
             $this->shop_in_shop_merchant_id = defined('MODULE_PAYMENT_PAYTRAIL_PAAMYYJA') ? MODULE_PAYMENT_PAYTRAIL_PAAMYYJA : null;
-            $this->language = ($_SESSION['languages_code'] == 'fi') ? 'FI' : 'EN';          
+            $this->language = (($_SESSION['languages_code'] ?? '') == 'fi') ? 'FI' : 'EN';          
             $this->success_address = zen_href_link(FILENAME_CHECKOUT_PROCESS, '', 'SSL');
             $this->cancel_address = zen_href_link(FILENAME_CHECKOUT_PAYMENT, '', 'SSL');
+            $this->cardsTable = DB_PREFIX . 'paytrail_cards';
+
+            // Saved card payment: the confirmation form is posted to checkout_process,
+            // the token charge is made in before_process() only after the customer confirms.
+            if (IS_ADMIN_FLAG !== true && !empty($_SESSION['paytrail_card_id']) && $this->cardSavingEnabled()) {
+                $this->form_action_url = zen_href_link(FILENAME_CHECKOUT_PROCESS, '', 'SSL');
+            }
 
             if (null === $this->sort_order) {
                 return false;
@@ -236,28 +260,109 @@ class paytrail extends base
             if(isset($_GET['checkout-status'])){
                 $status=$_GET['checkout-status'];
 
-                if(in_array($status,[
+                // fail = customer pressed cancel / back on the Paytrail page (or the payment
+                // was declined): if Paytrail also says fail -> no waiting, back to the
+                // payment selection right away.
+                if ($status === 'fail') {
+                    // One quick server side check first: with OP (mobile app approval) the
+                    // customer may come back via cancel/back while the payment is still being
+                    // completed or is already paid.
+                    static $failChecked = null;
+                    $txId = (string)($_GET['checkout-transaction-id'] ?? '');
+                    if ($failChecked === null) {
+                        $failChecked = 'fail';
+                        if ($this->isOwnTransaction($txId)) {
+                            $failChecked = $this->recheckPayment($txId) ?: 'unknown';
+                        }
+                    }
+                    if (in_array($failChecked, ['ok', 'pending', 'delayed'], true)) {
+                        // Paid after all -> create the order (verified again in before_process)
+                        zen_redirect(zen_href_link(FILENAME_CHECKOUT_PROCESS, 'paytrail_tx=' . urlencode($txId), 'SSL', true, false));
+                    }
+                    if (in_array($failChecked, ['new', 'unknown'], true)) {
+                        // Not finished at Paytrail yet (or API not answering): wait max 30s
+                        $this->waitPage();
+                    }
+                    global $messageStack;
+                    static $failShown = false;   // selection() is called twice on checkout_payment
+                    if (!$failShown && is_object($messageStack)) {
+                        $messageStack->add('checkout_payment', MODULE_PAYMENT_PAYTRAIL_PAYMENT_CANCELLED_SELECT_OTHER, 'caution');
+                        $failShown = true;
+                    }
+                }
+                // Not final yet: waiting page (status checked every 10s, max 30s)
+                elseif(in_array($status,[
                     'new',
                     'pending',
-                    'fail',
                     'delayed',
                     'authorization-hold'
-                ])){
+                ], true)){
                     $this->waitPage();
                 }
             }
 
-            return [
+            // Back on the payment page: payment of this session paid after all? -> create the order
+            if (!isset($_GET['checkout-status'])) {
+                $this->recoverPaidPayment();
+            }
+
+            $selection = [
                 'id'=>$this->code,
                 'module'=>$this->title
             ];
+
+            // Saved cards / save a new card (only for logged in customers, not guest checkout)
+            $customerId = $this->getLoggedInCustomerId();
+            if ($customerId > 0 && $this->cardSavingEnabled()) {
+                $current = (string)($_SESSION['paytrail_card_id'] ?? (!empty($_SESSION['paytrail_save_card']) ? 'new' : ''));
+                $fields  = [];
+
+                // <select> works with every template (some templates hide radio buttons in .ccinfo).
+                // Choosing a card also selects the Paytrail payment method radio.
+                $onchange = "var r=document.getElementById('pmt-" . $this->code . "'); if(r){r.checked=true; if(typeof r.onclick==='function'){r.onclick();}}";
+                $html  = '<select name="paytrail_card" id="paytrail-card-select" class="form-control form-select" style="max-width:420px; display:inline-block; width:auto;" onchange="' . $onchange . '">';
+                $html .= '<option value=""' . ($current === '' ? ' selected' : '') . '>' . MODULE_PAYMENT_PAYTRAIL_CARD_OTHER_METHOD . '</option>';
+                foreach ($this->getCustomerCards($customerId) as $card) {
+                    $selected = ($current === (string)$card['id']) ? ' selected' : '';
+                    $html .= '<option value="' . (int)$card['id'] . '"' . $selected . '>' . MODULE_PAYMENT_PAYTRAIL_CARD_PAY_WITH . ': ' . $this->cardLabel($card) . '</option>';
+                }
+                $html .= '<option value="new"' . ($current === 'new' ? ' selected' : '') . '>' . MODULE_PAYMENT_PAYTRAIL_CARD_SAVE_NEW . '</option>';
+                $html .= '</select>';
+                $html .= ' <small><a href="' . zen_href_link('paytrail_cards', '', 'SSL') . '">' . MODULE_PAYMENT_PAYTRAIL_CARD_MANAGE . '</a></small>';
+
+                $fields[] = ['title' => MODULE_PAYMENT_PAYTRAIL_CARD_CHOOSE, 'field' => $html, 'tag' => 'paytrail-card-select'];
+                $selection['fields'] = $fields;
+            }
+
+            return $selection;
         }
 
         /**
+         * Store the saved card / save card choice in session.
          * @since ZC v1.0.3
          */
         function pre_confirmation_check()
         {
+            unset($_SESSION['paytrail_card_id'], $_SESSION['paytrail_save_card'], $_SESSION['paytrail_token_stamp']);
+            $this->form_action_url = $this->apiBase . '/payments';
+
+            $customerId = $this->getLoggedInCustomerId();
+            if ($customerId < 1 || !$this->cardSavingEnabled() || !isset($_POST['paytrail_card'])) {
+                return false;
+            }
+
+            $choice = trim((string)$_POST['paytrail_card']);
+
+            if ($choice === 'new') {
+                $_SESSION['paytrail_save_card'] = true;
+            } elseif (ctype_digit($choice) && $this->getCustomerCard($customerId, (int)$choice) !== null) {
+                $_SESSION['paytrail_card_id'] = (int)$choice;
+                // One stamp per confirmation: Paytrail rejects a duplicate stamp, so a
+                // double submit can not charge the card twice.
+                $_SESSION['paytrail_token_stamp'] = $this->generate_uuid();
+                $this->form_action_url = zen_href_link(FILENAME_CHECKOUT_PROCESS, '', 'SSL');
+            }
+
             return false;
         }
 
@@ -266,7 +371,25 @@ class paytrail extends base
          */
         function confirmation()
         {
-            return ['title' => MODULE_PAYMENT_PAYTRAIL_TEXT_CHECKOUT];
+            $confirmation = ['title' => MODULE_PAYMENT_PAYTRAIL_TEXT_CHECKOUT];
+
+            $customerId = $this->getLoggedInCustomerId();
+            if (!empty($_SESSION['paytrail_card_id']) && $customerId > 0) {
+                $card = $this->getCustomerCard($customerId, (int)$_SESSION['paytrail_card_id']);
+                if ($card !== null) {
+                    $confirmation['fields'] = [[
+                        'title' => MODULE_PAYMENT_PAYTRAIL_CARD_PAY_WITH,
+                        'field' => $this->cardLabel($card),
+                    ]];
+                }
+            } elseif (!empty($_SESSION['paytrail_save_card'])) {
+                $confirmation['fields'] = [[
+                    'title' => '',
+                    'field' => MODULE_PAYMENT_PAYTRAIL_CARD_SAVE_NEW_INFO,
+                ]];
+            }
+
+            return $confirmation;
         }
 
         /**
@@ -278,74 +401,54 @@ class paytrail extends base
           // ********************************
           // ***       Paytrail           ***
           // ********************************
-          //Create a randomized order number and order stamp'
-          $transactionId      = null;	
-          $terms              = '<a href="https://www.paytrail.com/kuluttaja/tietoa-maksamisesta">https://www.paytrail.com/kuluttaja/tietoa-maksamisesta</a>';
-          
-          // This order number random 
-          $prefix             = '78';  // The first two digits you specify
-          $this->order_number = $this->createOrderNumber($prefix);        
+          $this->prepareOrderData();
 
-          // Order amount 
-          $decimals     = $currencies->get_decimal_places($_SESSION['currency']);
-          $amount       = number_format($order->info['total'], 2, '.', '')*100;
-          $this->amount = intval($amount);
-
-          $body     = $this->getBody();          
-          $headers  = $this->getHeaders('POST');
-          $headers['signature'] = $this->calculateHmac($headers, $body, $this->secretKey);
-
-          $client   = new \GuzzleHttp\Client([ 'headers' => $headers ]);
-          $response = null;
-          try {
-            $response = $client->post($this->form_action_url, ['body' => $body]);
+          // ------------------------------------------------------------
+          // Saved card: nothing is created here. The confirmation form posts
+          // to checkout_process and the token is charged in before_process().
+          // ------------------------------------------------------------
+          if (!empty($_SESSION['paytrail_card_id']) && $this->getLoggedInCustomerId() > 0) {
+              return '<input type="hidden" name="paytrail_token_payment" value="1">';
           }
-          catch (\GuzzleHttp\Exception\ClientException $e) {
-            if ($e->hasResponse()) {
-              $response = $e->getResponse();
-              echo 	'<style>
-                      #btn_submit, .buttonRow  { display: none; } /*Submit button hidden */
-                      .btn-success { display: none; } /*Submit button hidden */
-                      .payment-providers { display: none; }
-                      .ms-auto { display: none; }
-                    </style>';
-              echo "Unexpected HTTP status code: {$response->getStatusCode()}\n\n";
-              echo "<div style='color:red'>" .MODULE_PAYMENT_PAYTRAIL_PAYMENT_ERROR;
-              echo "<br><strong>" .MODULE_PAYMENT_PAYTRAIL_SELECET_OTHER  ."</strong> &nbsp;";
-              echo "<div class='btn btn btn-outline-danger btn-sm'>".zen_back_link() . zen_image_button(BUTTON_IMAGE_BACK, BUTTON_BACK_ALT) . "</a></div></div>";
+
+          // ------------------------------------------------------------
+          // Pay and save card: /tokenization/pay-and-add-card
+          // ------------------------------------------------------------
+          if (!empty($_SESSION['paytrail_save_card']) && $this->getLoggedInCustomerId() > 0) {
+              $stamp  = $this->generate_uuid();
+              $body   = $this->getBody([
+                  'stamp'        => $stamp,
+                  'callbackUrls' => $this->getCallbackUrls($this->getLoggedInCustomerId(), $stamp),
+              ]);
+              $result = $this->apiPost('/tokenization/pay-and-add-card', $body);
+
+              $html = "</form>\n";
+              if ($result['ok'] && $result['code'] == 200 && !empty($result['data']->redirectUrl)) {
+                  $this->rememberTransaction($result['data']->transactionId ?? '');
+                  $this->recordPayment($result['data']->transactionId ?? '', 'pay_add_card');
+                  $html .= $this->redirectHtml($result['data']->redirectUrl);
+              } else {
+                  $html .= $this->apiErrorHtml($result);
               }
+              return $html;
           }
 
-          $responseBody = $response->getBody()->getContents();
-          
-          // Flatten Guzzle response headers
-          $responseHeaders = array_column(array_map(function ($key, $value) {
-              return [ $key, $value[0] ];
-          }, array_keys($response->getHeaders()), array_values($response->getHeaders())), 1, 0);
+          // ------------------------------------------------------------
+          // Normal payment: /payments
+          // ------------------------------------------------------------
+          $body   = $this->getBody();
+          $result = $this->apiPost('/payments', $body);
 
-          $responseHmac = $this->calculateHmac($responseHeaders, $responseBody, $this->secretKey);
-          if ($responseHmac !== $response->getHeader('signature')[0]) {
-              echo "Response HMAC signature mismatch!\n";
-              echo '<div style="color:red">'. MODULE_PAYMENT_PAYTRAIL_TEXT_API_ERROR .'</div>';
-          } else {
-            $decodedresponsebody = json_decode($responseBody);
-            /**
-            ** Error control	
-            ** Erase " // " and check to sending request data.
-            **/	
-            // transactionId : ee7b4465-520a-4180-ac6e-d6dc47d71104
-            // direct pay https://pay.paytrail.com/pay/ee7b4465-520a-4180-ac6e-d6dc47d71104
-            //echo $decodedresponsebody->href;
-            //echo '<br>' .'transactionId: '.$decodedresponsebody->transactionId; 
-            //echo '<br>' .'Request ID: ' .$response->getHeader('request-id')[0];
-            //echo '<br>' .(json_encode(json_decode($responseBody), JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES));
-            //echo '<br><pre>'; print_r(json_decode($body,true)); exit;
+          if (!$result['ok'] || $result['code'] != 201) {
+              return "</form>\n" . $this->apiErrorHtml($result);
           }
 
-          $decodedresponsebody = json_decode($responseBody);
- 
+          $decodedresponsebody = $result['data'];
+
           if (isset($decodedresponsebody->transactionId)) {
             $this->transactionId = $decodedresponsebody->transactionId;
+            $this->rememberTransaction($this->transactionId);
+            $this->recordPayment($this->transactionId, 'payment');
           }
           
           $provider_selection = MODULE_PAYMENT_PAYTRAIL_PAYMENT_PROVIDER;
@@ -356,53 +459,9 @@ class paytrail extends base
           // ************************************************************          
           if ($provider_selection == '1') {
           if (isset($decodedresponsebody->href) && !empty($decodedresponsebody->href)) {
-              $paytrail_url = $decodedresponsebody->href;
-              
-              $html .= '<style>
-                  .paytrail-redirect-container {
-                      text-align: center;
-                      margin: 30px auto;
-                      padding: 20px;
-                      max-width: 500px;
-                      border: 1px solid #ddd;
-                      border-radius: 8px;
-                      background-color: #f9f9f9;
-                  }
-                  .paytrail-submit-btn {
-                      display: inline-block;
-                      background-color: #0073e6;
-                      color: #ffffff !important;
-                      padding: 12px 30px;
-                      font-size: 16px;
-                      font-weight: bold;
-                      text-decoration: none !important;
-                      border-radius: 5px;
-                      border: none;
-                      cursor: pointer;
-                      transition: background 0.2s;
-                      margin-top: 15px;
-                      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-                  }
-                  .paytrail-submit-btn:hover {
-                      background-color: #0059b3;
-                  }
-              </style>';
-
-              $html .= '<div class="paytrail-redirect-container">';
-              $html .= '  <p style="font-size: 15px; color: #333;">' . MODULE_PAYMENT_PAYTRAIL_TEXT_REDIRECTING . '</p>';
-              $html .= '  <p style="font-size: 13px; color: #666;">' .MODULE_PAYMENT_PAYTRAIL_TEXT_REDIRECTING_BUTTON .' </p>';
-              // A secure button that the user can click to proceed.
-              $html .= '  <a href="' . $paytrail_url . '" class="paytrail-submit-btn">'. MODULE_PAYMENT_PAYTRAIL_GO_TO_PAYTRAIL_PAGE .'</a>';
-              $html .= '</div>';
-              
-              // JS that automatically triggers the browser
-              $html .= '<script type="text/javascript">
-                  setTimeout(function() {
-                      window.location.href = "' . $paytrail_url . '";
-                  }, 500);  
-              </script>';
+              $html .= $this->redirectHtml($decodedresponsebody->href);
           } else {
-              $html .= '<div style="color:red; text-align:center; margin: 20px;">' . MODULE_PAYMENT_PAYTRAIL_TEXT_API_ERROR . ' (Yönlendirme adresi alınamadı)</div>';
+              $html .= '<div style="color:red; text-align:center; margin: 20px;">' . MODULE_PAYMENT_PAYTRAIL_TEXT_API_ERROR . ' (' . MODULE_PAYMENT_PAYTRAIL_NO_REDIRECT_URL . ')</div>';
           }
           }
           
@@ -432,19 +491,19 @@ class paytrail extends base
 
                   .button-content img {
                       width:100px; 
-                      height:50px;"
+                      height:50px;
                   }
                   #btn_submit, .buttonRow  { display: none; } /*Submit button hidden */
                   .btn-success { display: none; } /*Submit button hidden */
               </style>';
             
-          $html .='<script src="http://resources.paytrail.com/libraries/paytrail.js"></script>';
+          $html .='<script src="https://resources.paytrail.com/libraries/paytrail.js"></script>';
           $html .='<script>
                 const applePayButton = checkoutFinland.applePayButton;
-                 canMakePayment() checks that the user is on a Safari browser which supports Apple Pay.
+                // canMakePayment() checks that the user is on a Safari browser which supports Apple Pay.
                 if (applePayButton.canMakePayment()) 
                 {
-                   Mount the button to the element you created earlier, here e.g. #apple-pay-button.
+                  // Mount the button to the element you created earlier, here e.g. #apple-pay-button.
                   applePayButton.mount("#apple-pay-button", (redirectUrl) => 
                     {
                       setTimeout(() => {
@@ -472,7 +531,7 @@ class paytrail extends base
             isset($decodedresponsebody->customProviders) &&  // Check if the custom Providers feature exists.
             isset($decodedresponsebody->customProviders->applepay) &&  // Check if Apple Pay is available.
             isset($decodedresponsebody->customProviders->applepay->parameters) &&  // Check the existence of the parameters property.
-            $decodedresponsebody->customProviders->applepay->parameters > 0
+            !empty($decodedresponsebody->customProviders->applepay->parameters)
             ):
 
             $html .= '<div id="apple-pay-button">';
@@ -550,9 +609,96 @@ class paytrail extends base
          */
         function before_process()
         {
-            if (empty($_GET['checkout-status'])) {	
-              zen_redirect(zen_href_link(FILENAME_CHECKOUT_PAYMENT, '', 'SSL', true, false));				
-            }	 
+            global $messageStack;
+
+            $this->paymentResult = [];
+            $this->prepareOrderData();
+
+            // 1) Saved card (token) payment posted from the confirmation page
+            if (empty($_GET['checkout-status']) && empty($_GET['paytrail_tx']) && !empty($_SESSION['paytrail_card_id'])) {
+                $this->chargeSavedCard();
+                return;
+            }
+
+            // 2) Return from the waiting page: verify server side with the Paytrail API
+            if (empty($_GET['checkout-status']) && !empty($_GET['paytrail_tx'])) {
+                $transactionId = (string)$_GET['paytrail_tx'];
+                if (!$this->isOwnTransaction($transactionId)) {
+                    $this->failToPaymentPage(MODULE_PAYMENT_PAYTRAIL_PAYMENT_VERIFY_ERROR);
+                }
+                $status = $this->getPaymentStatus($transactionId);
+                $apiStatus = is_array($status) ? (string)($status['status'] ?? '') : '';
+                if ($apiStatus !== '') {
+                    $this->setPaymentStatus($transactionId, $apiStatus, (string)($status['provider'] ?? ''));
+                }
+                if (!in_array($apiStatus, ['ok', 'pending', 'delayed'], true)) {
+                    $this->failToPaymentPage(MODULE_PAYMENT_PAYTRAIL_PAYMENT_ERROR);
+                }
+                $this->setPendingOrderStatus($apiStatus);
+                $this->paymentResult = [
+                    'status'        => $apiStatus,
+                    'provider'      => $status['provider'] ?? '',
+                    'reference'     => $status['reference'] ?? '',
+                    'transactionId' => $transactionId,
+                    'amount'        => (int)($status['amount'] ?? 0),
+                ];
+                return;
+            }
+
+            // 3) Redirect back from Paytrail (payment page, 3DS, pay-and-add-card)
+            if (empty($_GET['checkout-status'])) {
+                zen_redirect(zen_href_link(FILENAME_CHECKOUT_PAYMENT, '', 'SSL', true, false));
+            }
+
+            // The signature of the return URL MUST be checked, otherwise anybody could
+            // open checkout_process?checkout-status=ok and create a paid order.
+            if (!$this->validateRedirectSignature($_GET)) {
+                error_log('Paytrail: return URL signature mismatch');
+                $this->failToPaymentPage(MODULE_PAYMENT_PAYTRAIL_PAYMENT_VERIFY_ERROR);
+            }
+
+            $transactionId = (string)($_GET['checkout-transaction-id'] ?? '');
+            if (!$this->isOwnTransaction($transactionId)) {
+                error_log('Paytrail: unknown transaction id on return ' . $transactionId);
+                $this->failToPaymentPage(MODULE_PAYMENT_PAYTRAIL_PAYMENT_VERIFY_ERROR);
+            }
+
+            $status = (string)$_GET['checkout-status'];
+
+            // pending = approved by the provider, further processing needed
+            //   (invoice waiting for manual activation, Walley B2B anti-fraud check)
+            // delayed = can be handled the same way as pending (Paytrail docs)
+            // -> the order is created with the "pending" order status, the final
+            //    result comes later to the callback URL or with admin activation.
+            if (in_array($status, ['pending', 'delayed'], true)) {
+                $this->setPendingOrderStatus($status);
+                $this->paymentResult = [
+                    'status'        => $status,
+                    'provider'      => (string)($_GET['checkout-provider'] ?? ''),
+                    'reference'     => (string)($_GET['checkout-reference'] ?? ''),
+                    'transactionId' => $transactionId,
+                    'amount'        => (int)($_GET['checkout-amount'] ?? 0),
+                ];
+                return;
+            }
+
+            if (in_array($status, ['new', 'authorization-hold'], true)) {
+                // Not final yet: show the waiting page (checks the status every 10s for 30s)
+                zen_redirect(zen_href_link(FILENAME_CHECKOUT_PAYMENT, 'checkout-status=' . urlencode($status) . '&checkout-transaction-id=' . urlencode($transactionId), 'SSL', true, false));
+            }
+
+            if ($status !== 'ok') {
+                $this->setPaymentStatus($transactionId, $status, (string)($_GET['checkout-provider'] ?? ''));
+                $this->failToPaymentPage(MODULE_PAYMENT_PAYTRAIL_PAYMENT_ERROR);
+            }
+
+            $this->paymentResult = [
+                'status'        => 'ok',
+                'provider'      => (string)($_GET['checkout-provider'] ?? ''),
+                'reference'     => (string)($_GET['checkout-reference'] ?? ''),
+                'transactionId' => $transactionId,
+                'amount'        => (int)($_GET['checkout-amount'] ?? 0),
+            ];
         }
 
         /**
@@ -567,32 +713,32 @@ class paytrail extends base
             $commentString = '';
             zen_update_orders_history($insert_id, $commentString, "System", -1, 0);
 
-            $payment_status = array (
-              'new'     => MODULE_PAYMENT_PAYTRAIL_PAYMENT_NEW,
-              'ok'      => MODULE_PAYMENT_PAYTRAIL_PAYMENT_OK, 
-              'fail'    => MODULE_PAYMENT_PAYTRAIL_PAYMENT_FAIL, 
-              'pending' => MODULE_PAYMENT_PAYTRAIL_PAYMENT_PENDING, 
-              'delayed' => MODULE_PAYMENT_PAYTRAIL_PAYMENT_DELAYED,
-              'authorization-hold' => $_GET['checkout-transaction-id']
-            );		
-
-            if ($_GET['checkout-status'] == 'new' || 
-                $_GET['checkout-status'] == 'fail' || 
-                $_GET['checkout-status'] == 'pending' || 
-                $_GET['checkout-status'] == 'delayed') {
-              $error_message = MODULE_PAYMENT_PAYTRAIL_PAYMENT_ERROR;
-              zen_redirect(zen_href_link(FILENAME_CHECKOUT_PAYMENT, '', 'SSL'));
-              $messageStack->add_session('checkout_payment', $error_message, 'error');				
-            } 
-            else if ($_GET['checkout-status'] == 'ok')	{
+            $resultStatus = $this->paymentResult['status'] ?? '';
+            if (in_array($resultStatus, ['ok', 'pending', 'delayed'], true)) {
+              $provider = $this->paymentResult['provider'];
+              if (!empty($this->paymentResult['savedCard'])) {
+                  $provider .= ' (' . MODULE_PAYMENT_PAYTRAIL_CARD_SAVED_CARD . ' ' . $this->paymentResult['savedCard'] . ')';
+              }
               // Update order history
-              $commentString = zen_db_prepare_input(MODULE_PAYMENT_PAYTRAIL_TITLE_STATUS .$payment_status[$_GET['checkout-status']] .MODULE_PAYMENT_PAYTRAIL_PAYMENT_METHOD .$_GET['checkout-provider'] . " , " .MODULE_PAYMENT_PAYTRAIL_REFERENCE_NUMBER .$_GET['checkout-reference'] . ".");
+              $statusText = ($resultStatus === 'ok') ? MODULE_PAYMENT_PAYTRAIL_PAYMENT_OK : MODULE_PAYMENT_PAYTRAIL_PAYMENT_WAITING_ACTIVATION;
+              $commentString = zen_db_prepare_input(MODULE_PAYMENT_PAYTRAIL_TITLE_STATUS . $statusText . MODULE_PAYMENT_PAYTRAIL_PAYMENT_METHOD . $provider . " , " . MODULE_PAYMENT_PAYTRAIL_REFERENCE_NUMBER . $this->paymentResult['reference'] . " , Transaction ID: " . $this->paymentResult['transactionId'] . ".");
+
+              // Paid amount differs from the order total (cart changed in another tab etc.)
+              if (!empty($this->paymentResult['amount']) && (int)$this->paymentResult['amount'] !== (int)$this->amount) {
+                  $commentString .= "\n" . sprintf(MODULE_PAYMENT_PAYTRAIL_AMOUNT_MISMATCH, number_format($this->paymentResult['amount'] / 100, 2, ',', ''), number_format($this->amount / 100, 2, ',', ''));
+              }
+              if ($this->isEmpAdminSession() && !in_array($this->paymentResult['transactionId'], $_SESSION['paytrail_transactions'] ?? [], true)) {
+                  $commentString .= "\n" . MODULE_PAYMENT_PAYTRAIL_EMP_ORDER_NOTE;
+              }
               // Writing payment information to order status history	
               zen_update_orders_history($insert_id, $commentString, null, $order->info['order_status'], 3);	
+
+              // Order <-> Paytrail transaction (callback updates, admin activation)
+              $this->setPaymentStatus($this->paymentResult['transactionId'], $resultStatus, (string)$this->paymentResult['provider'], (int)$insert_id);
             }
-            else {
-              zen_redirect(zen_href_link(FILENAME_CHECKOUT_PAYMENT, '', 'SSL'));  
-            }	          
+
+            // Clean up the session
+            unset($_SESSION['paytrail_card_id'], $_SESSION['paytrail_save_card'], $_SESSION['paytrail_token_stamp'], $_SESSION['paytrail_transactions']);
           
             return false;
         }
@@ -642,6 +788,13 @@ class paytrail extends base
             $db->Execute("insert into " . TABLE_CONFIGURATION . " (configuration_title, configuration_key, configuration_value, configuration_description, configuration_group_id, sort_order, date_added) values ('Pankin viitenumeron etuliite', 'MODULE_PAYMENT_PAYTRAIL_BANK_REFERENCE_PREFIX', '10', 'Oletus 10', '6', '12', now())");          
             $db->Execute("insert into " . TABLE_CONFIGURATION . " (configuration_title, configuration_key, configuration_value, configuration_description, configuration_group_id, sort_order, use_function, set_function, date_added) values ('Maksumoduulin voimassaoloalue', 'MODULE_PAYMENT_PAYTRAIL_ZONE', '0', 'Jos alue on valittu, käytä tätä maksutapaa vain valitun alueen ostotapahtumille..', '6', '13', 'zen_get_zone_class_title', 'zen_cfg_pull_down_zone_classes(', now())");
             $db->Execute("insert into " . TABLE_CONFIGURATION . " (configuration_title, configuration_key, configuration_value, configuration_description, configuration_group_id, sort_order, set_function, use_function, date_added) values ('Tilauksen tila suoritetun maksun jälkeen', 'MODULE_PAYMENT_PAYTRAIL_ORDER_STATUS_ID', '2', 'Tilauksen tila maksun suorittamisen jälkeen:', '6', '14', 'zen_cfg_pull_down_order_statuses(', 'zen_get_order_status_name', now())");
+            $db->Execute("insert into " . TABLE_CONFIGURATION . " (configuration_title, configuration_key, configuration_value, configuration_description, configuration_group_id, sort_order, set_function, date_added) values ('Korttien tallennus (tokenisointi)', 'MODULE_PAYMENT_PAYTRAIL_SAVE_CARD', 'False', 'Kirjautuneet asiakkaat voivat tallentaa maksukortin ja maksaa tallennetulla kortilla (Paytrail Token payments).<br>Ominaisuus täytyy olla aktivoitu Paytrail-sopimuksessa.', '6', '15', 'zen_cfg_select_option(array(\'True\', \'False\'), ', now())");
+            $db->Execute("insert into " . TABLE_CONFIGURATION . " (configuration_title, configuration_key, configuration_value, configuration_description, configuration_group_id, sort_order, set_function, use_function, date_added) values ('Tilauksen tila: odottaa aktivointia', 'MODULE_PAYMENT_PAYTRAIL_PENDING_STATUS_ID', '1', 'Tilauksen tila, kun maksu on <b>pending</b> (lasku odottaa manuaalista aktivointia, Walley B2B -tarkistus).<br>Kun lasku aktivoidaan (Paytrail-kauppiaspaneeli tai tilauksen sivulla) tila vaihtuu maksetuksi.', '6', '16', 'zen_cfg_pull_down_order_statuses(', 'zen_get_order_status_name', now())");
+            $this->ensureCardTable();
+            // Admin: Customers -> Paytrail Payments
+            if (function_exists('zen_register_admin_page') && !zen_page_key_exists('paytrailPayments')) {
+                zen_register_admin_page('paytrailPayments', 'BOX_PAYTRAIL_PAYMENTS', 'FILENAME_PAYTRAIL_PAYMENTS', '', 'customers', 'Y');
+            }
 
         }
 
@@ -652,6 +805,10 @@ class paytrail extends base
         {
             global $db;
             $db->Execute("delete from " . TABLE_CONFIGURATION . " where configuration_key in ('" . implode("', '", $this->keys()) . "')");
+            // Payment / card tables are kept (history). Admin menu entry is removed.
+            if (defined('TABLE_ADMIN_PAGES')) {
+                $db->Execute("delete from " . TABLE_ADMIN_PAGES . " where page_key = 'paytrailPayments'");
+            }
         }
 
         /**
@@ -672,6 +829,8 @@ class paytrail extends base
               'MODULE_PAYMENT_PAYTRAIL_BANK_REFERENCE_PREFIX',
               'MODULE_PAYMENT_PAYTRAIL_ZONE', 
               'MODULE_PAYMENT_PAYTRAIL_ORDER_STATUS_ID',
+              'MODULE_PAYMENT_PAYTRAIL_SAVE_CARD',
+              'MODULE_PAYMENT_PAYTRAIL_PENDING_STATUS_ID',
              ];
         }
   
@@ -681,7 +840,7 @@ class paytrail extends base
 		* @since Module  v5.6.0 
         * ********************************	
         */ 
-        public function getBody() 
+        public function getBody(array $extra = []) 
         {
 
           global $order, $currencies, $db, $order_totals;
@@ -732,17 +891,21 @@ class paytrail extends base
             'county' 		=> $billing_state,
             'country' 		=> $order->billing['country']['iso_code_2'],					
             ],
-          'manualInvoiceActivation' => true,
+          'manualInvoiceActivation' => (defined('MODULE_PAYMENT_PAYTRAIL_PAYMENT_INVOICE_ACTIVATION') && MODULE_PAYMENT_PAYTRAIL_PAYMENT_INVOICE_ACTIVATION == 'True'),
           'redirectUrls' => [
             'success' => $this->success_address,
             'cancel' => $this->cancel_address,
             ],
-          'callbackUrls' => [
-            'success' => $this->success_address,
-            'cancel' => $this->cancel_address,
-            ],
-          'callbackDelay' => 20,
+          'callbackUrls' => $this->getCallbackUrls(),
+          // 120s: normally the customer is back and the order exists before the callback
+          'callbackDelay' => 120,
           ];
+
+          // token, own stamp, callback urls for pay-and-add-card etc.
+          foreach ($extra as $key => $value) {
+            $body_request_data[$key] = $value;
+          }
+          $this->lastStamp = (string)$body_request_data['stamp'];
           
           // The json_encoding process in your current code continues from here:
           $body = json_encode($body_request_data, JSON_UNESCAPED_SLASHES);
@@ -751,7 +914,7 @@ class paytrail extends base
         }
 
         // Get Headers
-        protected function getHeaders(string $method, $transactionId = null) 
+        protected function getHeaders(string $method, $transactionId = null, $tokenizationId = null) 
         {
           //$datetime = new \DateTime();
           $headers = ['checkout-account'        => $this->merchantId,
@@ -776,6 +939,10 @@ class paytrail extends base
           // If you want to send the transactionId in the GET query
           if (!empty($transactionId)) {
             $headers['checkout-transaction-id'] = $transactionId;
+          }
+          // Tokenization: get card token
+          if (!empty($tokenizationId)) {
+            $headers['checkout-tokenization-id'] = $tokenizationId;
           }
           return $headers;
         }	
@@ -1197,6 +1364,1054 @@ class paytrail extends base
         } 
 		// end itemArgs($order)
 
+        /**   
+        * ********************************  
+        *  Helpers  (since v5.7.0)
+        * ********************************	
+        */ 
+
+        /**
+         * Order number and amount (minor unit) for the current order
+         */
+        protected function prepareOrderData()
+        {
+            global $order;
+            // This order number random 
+            $prefix             = '78';  // The first two digits you specify
+            $this->order_number = $this->createOrderNumber($prefix);
+            $amount             = number_format($order->info['total'], 2, '.', '') * 100;
+            $this->amount       = intval(round($amount));
+        }
+
+        /**
+         * Signed POST request to the Paytrail API with Guzzle.
+         * Response HMAC is always validated.
+         *
+         * @return array ['ok' => bool, 'code' => int, 'data' => object|null, 'raw' => string]
+         */
+        protected function apiPost(string $uri, string $body = '', ?string $transactionId = null, ?string $tokenizationId = null): array
+        {
+            $headers = $this->getHeaders('POST', $transactionId, $tokenizationId);
+            // New token payments / pay-and-add-card are created without a transaction id
+            if (empty($headers['checkout-transaction-id'])) {
+                unset($headers['checkout-transaction-id']);
+            }
+            $headers['signature'] = $this->calculateHmac($headers, $body, $this->secretKey);
+
+            $client = new \GuzzleHttp\Client([
+                'headers'         => $headers,
+                'http_errors'     => false,
+                'allow_redirects' => false,
+                'timeout'         => 30,
+            ]);
+
+            try {
+                $response = $client->post($this->apiBase . $uri, ['body' => $body]);
+            } catch (\Throwable $e) {
+                error_log('Paytrail API error ' . $uri . ': ' . $e->getMessage());
+                return ['ok' => false, 'code' => 0, 'data' => null, 'raw' => ''];
+            }
+
+            $responseBody    = (string)$response->getBody();
+            $responseHeaders = [];
+            foreach ($response->getHeaders() as $name => $values) {
+                $responseHeaders[strtolower($name)] = $values[0] ?? '';
+            }
+
+            if (!$this->validateHmac($responseHeaders, $responseBody, $responseHeaders['signature'] ?? '', (string)$this->secretKey)) {
+                error_log('Paytrail API ' . $uri . ': response HMAC signature mismatch (HTTP ' . $response->getStatusCode() . ') ' . substr($responseBody, 0, 500));
+                return ['ok' => false, 'code' => $response->getStatusCode(), 'data' => json_decode($responseBody), 'raw' => $responseBody, 'hmac' => false];
+            }
+
+            return ['ok' => true, 'code' => $response->getStatusCode(), 'data' => json_decode($responseBody), 'raw' => $responseBody];
+        }
+
+        /**
+         * Customer initiated (CIT) charge with a saved card token.
+         * Called in before_process() after the customer has pressed "Confirm order".
+         */
+        protected function chargeSavedCard()
+        {
+            $customerId = $this->getLoggedInCustomerId();
+            $card = ($customerId > 0) ? $this->getCustomerCard($customerId, (int)$_SESSION['paytrail_card_id']) : null;
+            if ($card === null) {
+                unset($_SESSION['paytrail_card_id']);
+                $this->failToPaymentPage(MODULE_PAYMENT_PAYTRAIL_CARD_NOT_FOUND);
+            }
+
+            if (empty($_SESSION['paytrail_token_stamp'])) {
+                $_SESSION['paytrail_token_stamp'] = $this->generate_uuid();
+            }
+            $stamp = $_SESSION['paytrail_token_stamp'];
+
+            $body   = $this->getBody(['stamp' => $stamp, 'token' => $card['token']]);
+            $result = $this->apiPost('/payments/token/cit/charge', $body);
+            $data   = $result['data'];
+
+            // A new stamp is needed for the next try (Paytrail rejects duplicate stamps)
+            unset($_SESSION['paytrail_token_stamp']);
+
+            if ($result['ok'] && $result['code'] == 201 && !empty($data->transactionId)) {
+                $this->rememberTransaction($data->transactionId);
+                $this->recordPayment($data->transactionId, 'token');
+                $this->setPaymentStatus($data->transactionId, 'ok', (string)($card['card_type'] ?: 'creditcard'));
+                $this->paymentResult = [
+                    'status'        => 'ok',
+                    'provider'      => $card['card_type'] ?: 'creditcard',
+                    'reference'     => $this->order_number,
+                    'transactionId' => $data->transactionId,
+                    'amount'        => $this->amount,
+                    'savedCard'     => '**** ' . $card['partial_pan'],
+                ];
+                return;
+            }
+
+            // 3D Secure step-up required: customer is redirected, Paytrail returns
+            // to checkout_process (redirectUrls) with signed parameters.
+            if ($result['ok'] && $result['code'] == 403 && !empty($data->threeDSecureUrl)) {
+                $this->rememberTransaction($data->transactionId ?? '');
+                $this->recordPayment($data->transactionId ?? '', 'token');
+                zen_redirect($data->threeDSecureUrl);
+            }
+
+            $message = MODULE_PAYMENT_PAYTRAIL_CARD_CHARGE_FAILED;
+            if (!empty($data->acquirerResponseCodeDescription)) {
+                $message .= ' (' . zen_output_string_protected($data->acquirerResponseCodeDescription) . ')';
+            }
+            // Card can not be used any more -> remove it
+            if (!empty($data->acquirerResponseCode) && in_array((string)$data->acquirerResponseCode, ['111','119','165','200','207','208','209','902','908','909','181','183','187','189'], true)) {
+                $this->deleteCustomerCard($customerId, (int)$card['id']);
+                $message .= ' ' . MODULE_PAYMENT_PAYTRAIL_CARD_REMOVED;
+            }
+            error_log('Paytrail token charge failed: HTTP ' . $result['code'] . ' ' . substr($result['raw'], 0, 500));
+            unset($_SESSION['paytrail_card_id']);
+            $this->failToPaymentPage($message);
+        }
+
+        /**
+         * Tokenization: get the card token with checkout-tokenization-id (add card form flow)
+         * @return object|null
+         */
+        public function getCardToken(string $tokenizationId)
+        {
+            $body   = json_encode(['checkout-tokenization-id' => $tokenizationId], JSON_UNESCAPED_SLASHES);
+            $result = $this->apiPost('/tokenization/' . rawurlencode($tokenizationId), $body, null, $tokenizationId);
+            if ($result['ok'] && $result['code'] == 200 && !empty($result['data']->token)) {
+                return $result['data'];
+            }
+            error_log('Paytrail get token failed: HTTP ' . $result['code'] . ' ' . substr($result['raw'], 0, 500));
+            return null;
+        }
+
+        /**
+         * Auto-submitting form to Paytrail add card page (POST /tokenization/addcard-form).
+         * Authentication is done with signed form fields.
+         */
+        public function addCardFormHtml(string $successUrl, string $cancelUrl): string
+        {
+            $fields = [
+                'checkout-account'              => (string)$this->merchantId,
+                'checkout-algorithm'            => 'sha256',
+                'checkout-method'               => 'POST',
+                'checkout-nonce'                => bin2hex(random_bytes(16)),
+                'checkout-timestamp'            => gmdate('Y-m-d\TH:i:s\Z'),
+                'checkout-redirect-success-url' => $successUrl,
+                'checkout-redirect-cancel-url'  => $cancelUrl,
+                'language'                      => $this->language,
+            ];
+            $fields['signature'] = $this->calculateHmac($fields, '', $this->secretKey);
+
+            $html = '<form id="paytrail-addcard-form" action="' . $this->apiBase . '/tokenization/addcard-form" method="post">';
+            foreach ($fields as $name => $value) {
+                $html .= '<input type="hidden" name="' . zen_output_string_protected($name) . '" value="' . zen_output_string_protected($value) . '">';
+            }
+            $html .= '<button type="submit" class="btn btn-primary">' . MODULE_PAYMENT_PAYTRAIL_ADD_CARD . '</button>';
+            $html .= '</form>';
+            return $html;
+        }
+
+        /**
+         * Callback urls. For pay-and-add-card the customer id is signed into the url,
+         * because the callback is a server-to-server call without the customer session.
+         */
+        protected function getCallbackUrls(int $customerId = 0, string $stamp = ''): array
+        {
+            $params = '';
+            if ($customerId > 0 && $stamp !== '') {
+                $params = 'cid=' . $customerId . '&csig=' . $this->customerSignature($customerId, $stamp);
+            }
+            $url = zen_href_link('paytrail_callback', $params, 'SSL', false, false);
+            return ['success' => $url, 'cancel' => $url];
+        }
+
+        public function customerSignature(int $customerId, string $stamp): string
+        {
+            return hash_hmac('sha256', 'paytrail-card|' . $customerId . '|' . $stamp, (string)$this->secretKey);
+        }
+
+        /**
+         * Remember transaction ids created in this session (return URL / waiting page check).
+         */
+        protected function rememberTransaction(?string $transactionId)
+        {
+            if (empty($transactionId)) {
+                return;
+            }
+            $list   = $_SESSION['paytrail_transactions'] ?? [];
+            $list[] = $transactionId;
+            $_SESSION['paytrail_transactions'] = array_slice(array_unique($list), -10);
+        }
+
+        public function isOwnTransaction(?string $transactionId): bool
+        {
+            if (empty($transactionId)) {
+                return false;
+            }
+            if (in_array($transactionId, $_SESSION['paytrail_transactions'] ?? [], true)) {
+                return true;
+            }
+            // Admin "Place Order" (EMP login) for this customer: his paid payment without an order
+            if ($this->isEmpAdminSession()) {
+                $row = $this->getPayment($transactionId);
+                return $row !== null
+                    && (int)$row['customers_id'] === (int)$_SESSION['customer_id']
+                    && (int)$row['orders_id'] === 0
+                    && in_array($row['status'], ['ok', 'pending', 'delayed'], true);
+            }
+            return false;
+        }
+
+        /**
+         * Admin is logged in as the customer (Zen Cart "Place Order" / passwordless EMP login)
+         */
+        public function isEmpAdminSession(): bool
+        {
+            return !empty($_SESSION['emp_admin_login']) && !empty($_SESSION['emp_admin_id']) && !empty($_SESSION['customer_id']);
+        }
+
+        /**
+         * EMP session: paid payments without an order of the logged in customer (last 14 days)
+         */
+        protected function empPaidWithoutOrder(): array
+        {
+            global $db;
+            if (!$this->isEmpAdminSession()) {
+                return [];
+            }
+            $this->ensureCardTable();
+            $list   = [];
+            $result = $db->Execute("SELECT transaction_id FROM " . $this->paymentsTable() . "
+                                    WHERE customers_id = " . (int)$_SESSION['customer_id'] . "
+                                      AND orders_id = 0 AND status IN ('ok','pending','delayed')
+                                      AND date_added >= NOW() - INTERVAL 14 DAY
+                                    ORDER BY id DESC LIMIT 5");
+            while (!$result->EOF) {
+                $list[] = $result->fields['transaction_id'];
+                $result->MoveNext();
+            }
+            return $list;
+        }
+
+        protected function failToPaymentPage(string $message)
+        {
+            global $messageStack;
+            $messageStack->add_session('checkout_payment', $message, 'error');
+            zen_redirect(zen_href_link(FILENAME_CHECKOUT_PAYMENT, '', 'SSL', true, false));
+        }
+
+        protected function redirectHtml(string $paytrail_url): string
+        {
+            $urlAttr = zen_output_string_protected($paytrail_url);
+            $urlJs   = json_encode($paytrail_url, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES);
+
+            $html  = '<style>
+                  .paytrail-redirect-container { text-align: center; margin: 30px auto; padding: 20px; max-width: 500px; border: 1px solid #ddd; border-radius: 8px; background-color: #f9f9f9; }
+                  .paytrail-submit-btn { display: inline-block; background-color: #0073e6; color: #ffffff !important; padding: 12px 30px; font-size: 16px; font-weight: bold; text-decoration: none !important; border-radius: 5px; border: none; cursor: pointer; transition: background 0.2s; margin-top: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+                  .paytrail-submit-btn:hover { background-color: #0059b3; }
+                  #btn_submit, .buttonRow, .btn-success { display: none; }
+              </style>';
+            $html .= '<div class="paytrail-redirect-container">';
+            $html .= '  <p style="font-size: 15px; color: #333;">' . MODULE_PAYMENT_PAYTRAIL_TEXT_REDIRECTING . '</p>';
+            $html .= '  <p style="font-size: 13px; color: #666;">' . MODULE_PAYMENT_PAYTRAIL_TEXT_REDIRECTING_BUTTON . ' </p>';
+            $html .= '  <a href="' . $urlAttr . '" class="paytrail-submit-btn">' . MODULE_PAYMENT_PAYTRAIL_GO_TO_PAYTRAIL_PAGE . '</a>';
+            $html .= '</div>';
+            $html .= '<script type="text/javascript">setTimeout(function() { window.location.href = ' . $urlJs . '; }, 500);</script>';
+            return $html;
+        }
+
+        protected function apiErrorHtml(array $result): string
+        {
+            $html  = '<style>#btn_submit, .buttonRow, .btn-success, .payment-providers, .ms-auto { display: none; }</style>';
+            $html .= '<div style="color:red">';
+            if (isset($result['hmac']) && $result['hmac'] === false) {
+                $html .= MODULE_PAYMENT_PAYTRAIL_TEXT_API_ERROR;
+            } else {
+                $html .= MODULE_PAYMENT_PAYTRAIL_PAYMENT_ERROR . ($result['code'] ? ' (HTTP ' . (int)$result['code'] . ')' : '');
+            }
+            $html .= '<br><strong>' . MODULE_PAYMENT_PAYTRAIL_SELECET_OTHER . '</strong> &nbsp;';
+            $html .= '<a class="btn btn-outline-danger btn-sm" href="' . zen_href_link(FILENAME_CHECKOUT_PAYMENT, '', 'SSL') . '">' . BUTTON_BACK_ALT . '</a></div>';
+            return $html;
+        }
+
+        // ---------------- Paytrail payments table (transactionId <-> customer <-> order) ----------------
+        //
+        // Every payment is written to DB_PREFIX paytrail_payments when it is created.
+        // Return URL, callback, waiting page, admin page and recovery all use this table.
+
+        public $lastStamp = '';
+
+        protected function paymentsTable(): string
+        {
+            return DB_PREFIX . 'paytrail_payments';
+        }
+
+        protected function pendingOrderStatusId(): int
+        {
+            return (defined('MODULE_PAYMENT_PAYTRAIL_PENDING_STATUS_ID') && (int)MODULE_PAYMENT_PAYTRAIL_PENDING_STATUS_ID > 0)
+                ? (int)MODULE_PAYMENT_PAYTRAIL_PENDING_STATUS_ID
+                : (int)DEFAULT_ORDERS_STATUS_ID;
+        }
+
+        protected function paidOrderStatusId(): int
+        {
+            return ((int)MODULE_PAYMENT_PAYTRAIL_ORDER_STATUS_ID > 0) ? (int)MODULE_PAYMENT_PAYTRAIL_ORDER_STATUS_ID : (int)DEFAULT_ORDERS_STATUS_ID;
+        }
+
+        /**
+         * The order is created after before_process(): set the "waiting" status for pending payments.
+         */
+        protected function setPendingOrderStatus(string $status)
+        {
+            global $order;
+            if ($status !== 'ok') {
+                // checkout_process.php copies $this->order_status to the order AFTER before_process()
+                $this->order_status = $this->pendingOrderStatusId();
+                if (is_object($order)) {
+                    $order->info['order_status'] = $this->order_status;
+                }
+            }
+        }
+
+        /**
+         * Short cart / order snapshot (JSON) so a paid payment without an order can be handled.
+         */
+        protected function orderSnapshot(): string
+        {
+            global $order;
+            if (!is_object($order)) {
+                return '';
+            }
+            $products = [];
+            foreach ((array)$order->products as $product) {
+                $attributes = [];
+                foreach ((array)($product['attributes'] ?? []) as $attribute) {
+                    $attributes[] = ($attribute['option'] ?? '') . ': ' . ($attribute['value'] ?? '');
+                }
+                $products[] = [
+                    'qty'        => $product['qty'] ?? 0,
+                    'name'       => $product['name'] ?? '',
+                    'model'      => $product['model'] ?? '',
+                    'price'      => round((float)($product['final_price'] ?? 0) * (1 + (float)($product['tax'] ?? 0) / 100), 2),
+                    'attributes' => $attributes,
+                ];
+            }
+            $snapshot = [
+                'products'  => $products,
+                'shipping'  => $order->info['shipping_method'] ?? '',
+                'total'     => $order->info['total'] ?? 0,
+                'comments'  => $order->info['comments'] ?? '',
+                'telephone' => $order->customer['telephone'] ?? '',
+                'delivery'  => trim(($order->delivery['firstname'] ?? '') . ' ' . ($order->delivery['lastname'] ?? '') . ', '
+                             . ($order->delivery['street_address'] ?? '') . ', ' . ($order->delivery['postcode'] ?? '') . ' ' . ($order->delivery['city'] ?? ''), ' ,'),
+            ];
+            // Full order data: used by the admin "create order" (last resort, see createOrderFromPayment)
+            global $order_totals;
+            $snapshot['full'] = [
+                'info'     => $order->info,
+                'customer' => $order->customer,
+                'delivery' => $order->delivery,
+                'billing'  => $order->billing,
+                'products' => $order->products,
+                'totals'   => is_array($order_totals) ? $order_totals : [],
+                'session'  => [
+                    'customer_id'   => (int)($_SESSION['customer_id'] ?? 0),
+                    'languages_code'=> $_SESSION['languages_code'] ?? '',
+                    'ip'            => ($_SESSION['customers_ip_address'] ?? '') . ' - ' . ($_SERVER['REMOTE_ADDR'] ?? ''),
+                    'weight'        => (isset($_SESSION['cart']) && is_object($_SESSION['cart'])) ? (float)$_SESSION['cart']->weight : 0,
+                    'shipping_id'   => $_SESSION['shipping']['id'] ?? '',
+                    'session_id'    => session_id(),
+                ],
+                // Raw basket (same data as customers_basket) at the moment of payment
+                'cart'     => (isset($_SESSION['cart']) && is_object($_SESSION['cart'])) ? (array)$_SESSION['cart']->contents : [],
+            ];
+            return (string)json_encode($snapshot, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR);
+        }
+
+        /**
+         * ADMIN - last resort: create the Zen Cart order from the saved order data of a paid
+         * payment that has no order (same tables / fields as order::create()).
+         * Stock is not decreased and no customer e-mail is sent automatically.
+         *
+         * @return int new orders_id or 0 (error message in $this->lastError)
+         */
+        public $lastError = '';
+
+        public function createOrderFromPayment(string $transactionId, bool $emptyBasket = true): int
+        {
+            global $db;
+            $this->lastError = '';
+            $row = $this->getPayment($transactionId);
+            if ($row === null) {
+                $this->lastError = 'transaction not found';
+                return 0;
+            }
+            if ((int)$row['orders_id'] > 0) {
+                $this->lastError = 'order already exists: ' . (int)$row['orders_id'];
+                return 0;
+            }
+            if (!in_array($row['status'], ['ok', 'pending', 'delayed'], true)) {
+                $this->lastError = 'payment status is ' . $row['status'];
+                return 0;
+            }
+            $snapshot = json_decode((string)$row['cart_snapshot'], true);
+            $full = $snapshot['full'] ?? null;
+            if (!is_array($full) || empty($full['products'])) {
+                $this->lastError = 'no saved order data';
+                return 0;
+            }
+
+            $info = $full['info'];
+            $c    = $full['customer'];
+            $d    = $full['delivery'] ?: $full['billing'];
+            $b    = $full['billing'];
+            $sess = $full['session'];
+            $status = ($row['status'] === 'ok') ? $this->paidOrderStatusId() : $this->pendingOrderStatusId();
+            $val  = function ($array, $key, $default = '') { return (is_array($array) && isset($array[$key]) && !is_array($array[$key])) ? $array[$key] : $default; };
+            $country = function ($address) { return (is_array($address) && isset($address['country']['title'])) ? $address['country']['title'] : ''; };
+            $shipCode = (string)$val($info, 'shipping_module_code');
+            if ($val($sess, 'shipping_id') === 'free_free') {
+                $shipCode = 'free_free';
+            }
+
+            $order_data = [
+                'customers_id' => (int)$row['customers_id'],
+                'customers_name' => trim($val($c, 'firstname') . ' ' . $val($c, 'lastname')),
+                'customers_company' => $val($c, 'company'),
+                'customers_street_address' => $val($c, 'street_address'),
+                'customers_suburb' => $val($c, 'suburb'),
+                'customers_city' => $val($c, 'city'),
+                'customers_postcode' => $val($c, 'postcode'),
+                'customers_state' => $val($c, 'state'),
+                'customers_country' => $country($c),
+                'customers_telephone' => $val($c, 'telephone'),
+                'customers_email_address' => $val($c, 'email_address'),
+                'customers_address_format_id' => (int)$val($c, 'format_id', 1),
+                'delivery_name' => trim($val($d, 'firstname') . ' ' . $val($d, 'lastname')),
+                'delivery_company' => $val($d, 'company'),
+                'delivery_street_address' => $val($d, 'street_address'),
+                'delivery_suburb' => $val($d, 'suburb'),
+                'delivery_city' => $val($d, 'city'),
+                'delivery_postcode' => $val($d, 'postcode'),
+                'delivery_state' => $val($d, 'state'),
+                'delivery_country' => $country($d),
+                'delivery_address_format_id' => (int)$val($d, 'format_id', 1),
+                'billing_name' => trim($val($b, 'firstname') . ' ' . $val($b, 'lastname')),
+                'billing_company' => $val($b, 'company'),
+                'billing_street_address' => $val($b, 'street_address'),
+                'billing_suburb' => $val($b, 'suburb'),
+                'billing_city' => $val($b, 'city'),
+                'billing_postcode' => $val($b, 'postcode'),
+                'billing_state' => $val($b, 'state'),
+                'billing_country' => $country($b),
+                'billing_address_format_id' => (int)$val($b, 'format_id', 1),
+                'payment_method' => $val($info, 'payment_method', MODULE_PAYMENT_PAYTRAIL_TEXT_TITLE),
+                'payment_module_code' => $this->code,
+                'shipping_method' => $val($info, 'shipping_method'),
+                'shipping_module_code' => (strpos($shipCode, '_') > 0 ? substr($shipCode, 0, strpos($shipCode, '_')) : $shipCode),
+                'coupon_code' => $val($info, 'coupon_code'),
+                'cc_type' => '', 'cc_owner' => '', 'cc_number' => '', 'cc_expires' => '',
+                'date_purchased' => 'now()',
+                'orders_status' => $status,
+                'order_total' => (float)$val($info, 'total', $row['amount'] / 100),
+                'order_tax' => (float)$val($info, 'tax', 0),
+                'currency' => $val($info, 'currency', 'EUR'),
+                'currency_value' => (float)$val($info, 'currency_value', 1),
+                'ip_address' => substr((string)$val($sess, 'ip'), 0, 96),
+                'language_code' => $val($sess, 'languages_code'),
+                'order_weight' => (float)$val($sess, 'weight', 0),
+                'is_wholesale' => (int)$val($info, 'is_wholesale', 0),
+            ];
+            if ($val($info, 'shipping_tax_rate', null) !== null) {
+                $order_data['shipping_tax_rate'] = (float)$info['shipping_tax_rate'];
+            }
+            zen_db_perform(TABLE_ORDERS, $order_data);
+            $ordersId = (int)$db->insert_ID();
+            if ($ordersId < 1) {
+                $this->lastError = 'order insert failed';
+                return 0;
+            }
+
+            foreach ((array)$full['totals'] as $total) {
+                zen_db_perform(TABLE_ORDERS_TOTAL, [
+                    'orders_id' => $ordersId,
+                    'title' => (string)($total['title'] ?? ''),
+                    'text' => (string)($total['text'] ?? ''),
+                    'value' => is_numeric($total['value'] ?? null) ? $total['value'] : '0',
+                    'class' => (string)($total['code'] ?? ''),
+                    'sort_order' => (int)($total['sort_order'] ?? 0),
+                ]);
+            }
+
+            foreach ((array)$full['products'] as $p) {
+                $prid = (string)($p['id'] ?? '');
+                zen_db_perform(TABLE_ORDERS_PRODUCTS, [
+                    'orders_id' => $ordersId,
+                    'products_id' => (int)$prid,
+                    'products_model' => (string)($p['model'] ?? ''),
+                    'products_name' => (string)($p['name'] ?? ''),
+                    'products_price' => (float)($p['price'] ?? 0),
+                    'final_price' => (float)($p['final_price'] ?? 0),
+                    'onetime_charges' => (float)($p['onetime_charges'] ?? 0),
+                    'products_tax' => (float)($p['tax'] ?? 0),
+                    'products_quantity' => (float)($p['qty'] ?? 0),
+                    'products_priced_by_attribute' => (int)($p['products_priced_by_attribute'] ?? 0),
+                    'product_is_free' => (int)($p['product_is_free'] ?? 0),
+                    'products_discount_type' => (int)($p['products_discount_type'] ?? 0),
+                    'products_discount_type_from' => (int)($p['products_discount_type_from'] ?? 0),
+                    'products_prid' => $prid,
+                    'products_weight' => (float)($p['weight'] ?? 0),
+                    'products_virtual' => (int)($p['products_virtual'] ?? 0),
+                    'product_is_always_free_shipping' => (int)($p['product_is_always_free_shipping'] ?? 0),
+                    'products_quantity_order_min' => (float)($p['products_quantity_order_min'] ?? 1),
+                    'products_quantity_order_units' => (float)($p['products_quantity_order_units'] ?? 1),
+                    'products_quantity_order_max' => (float)($p['products_quantity_order_max'] ?? 0),
+                    'products_quantity_mixed' => (int)($p['products_quantity_mixed'] ?? 0),
+                    'products_mixed_discount_quantity' => (int)($p['products_mixed_discount_quantity'] ?? 0),
+                ]);
+                $opId = (int)$db->insert_ID();
+                foreach ((array)($p['attributes'] ?? []) as $a) {
+                    zen_db_perform(TABLE_ORDERS_PRODUCTS_ATTRIBUTES, [
+                        'orders_id' => $ordersId,
+                        'orders_products_id' => $opId,
+                        'products_options' => (string)($a['option'] ?? ''),
+                        'products_options_values' => (string)($a['value'] ?? ''),
+                        'options_values_price' => (float)($a['price'] ?? 0),
+                        'price_prefix' => (string)($a['prefix'] ?? '+'),
+                        'products_options_id' => (int)($a['option_id'] ?? 0),
+                        'products_options_values_id' => (int)($a['value_id'] ?? 0),
+                        'products_prid' => $prid,
+                    ]);
+                }
+            }
+
+            // Order history: customer comment + Paytrail payment info
+            zen_db_perform(TABLE_ORDERS_STATUS_HISTORY, [
+                'orders_id' => $ordersId,
+                'orders_status_id' => $status,
+                'date_added' => 'now()',
+                'customer_notified' => 0,
+                'comments' => (string)$val($info, 'comments'),
+                'updated_by' => $this->adminName(),
+            ]);
+            $statusText = ($row['status'] === 'ok') ? MODULE_PAYMENT_PAYTRAIL_PAYMENT_OK : MODULE_PAYMENT_PAYTRAIL_PAYMENT_WAITING_ACTIVATION;
+            zen_update_orders_history($ordersId, MODULE_PAYMENT_PAYTRAIL_ORDER_FROM_TABLE . "\n" . MODULE_PAYMENT_PAYTRAIL_TITLE_STATUS . $statusText . MODULE_PAYMENT_PAYTRAIL_PAYMENT_METHOD . $row['provider'] . ' , ' . MODULE_PAYMENT_PAYTRAIL_REFERENCE_NUMBER . $row['reference'] . ' , Transaction ID: ' . $row['transaction_id'], $this->adminName(), -1, 0);
+
+            $this->setPaymentStatus($row['transaction_id'], '', '', $ordersId);
+
+            // The products are still in the customer's saved basket -> remove them
+            if ($emptyBasket && (int)$row['customers_id'] > 0) {
+                $db->Execute("DELETE FROM " . TABLE_CUSTOMERS_BASKET . " WHERE customers_id = " . (int)$row['customers_id']);
+                $db->Execute("DELETE FROM " . TABLE_CUSTOMERS_BASKET_ATTRIBUTES . " WHERE customers_id = " . (int)$row['customers_id']);
+            }
+            return $ordersId;
+        }
+
+        /**
+         * New payment created at Paytrail -> row with status "new".
+         * $method: payment | pay_add_card | token
+         */
+        protected function recordPayment(?string $transactionId, string $method = 'payment')
+        {
+            global $db, $order;
+            if (empty($transactionId)) {
+                return;
+            }
+            $this->ensureCardTable();
+            $email = is_object($order) ? (string)($order->customer['email_address'] ?? '') : '';
+            $name  = is_object($order) ? trim(($order->customer['firstname'] ?? '') . ' ' . ($order->customer['lastname'] ?? '')) : '';
+
+            $sql = "INSERT INTO " . $this->paymentsTable() . "
+                    (transaction_id, stamp, reference, customers_id, customer_email, customer_name, orders_id, amount, currency, method, provider, status, cart_snapshot, session_id, admin_notified, date_added, last_modified)
+                    VALUES (:tx, :stamp, :ref, :cid, :email, :name, 0, :amount, 'EUR', :method, '', 'new', :snapshot, :sid, 0, now(), now())
+                    ON DUPLICATE KEY UPDATE last_modified = now()";
+            $sql = $db->bindVars($sql, ':tx', $transactionId, 'string');
+            $sql = $db->bindVars($sql, ':stamp', substr((string)$this->lastStamp, 0, 64), 'string');
+            $sql = $db->bindVars($sql, ':ref', substr((string)$this->order_number, 0, 32), 'string');
+            $sql = $db->bindVars($sql, ':cid', (int)($_SESSION['customer_id'] ?? 0), 'integer');
+            $sql = $db->bindVars($sql, ':email', substr($email, 0, 96), 'string');
+            $sql = $db->bindVars($sql, ':name', substr($name, 0, 128), 'string');
+            $sql = $db->bindVars($sql, ':amount', (int)$this->amount, 'integer');
+            $sql = $db->bindVars($sql, ':method', $method, 'string');
+            $sql = $db->bindVars($sql, ':snapshot', $this->orderSnapshot(), 'string');
+            $sql = $db->bindVars($sql, ':sid', substr((string)session_id(), 0, 128), 'string');
+            $db->Execute($sql);
+        }
+
+        public function getPayment(string $transactionId): ?array
+        {
+            global $db;
+            if ($transactionId === '') {
+                return null;
+            }
+            $this->ensureCardTable();
+            $sql = "SELECT * FROM " . $this->paymentsTable() . " WHERE transaction_id = :tx LIMIT 1";
+            $sql = $db->bindVars($sql, ':tx', $transactionId, 'string');
+            $result = $db->Execute($sql);
+            return $result->EOF ? null : $result->fields;
+        }
+
+        public function getPaymentByOrder(int $ordersId): ?array
+        {
+            global $db;
+            $this->ensureCardTable();
+            $result = $db->Execute("SELECT * FROM " . $this->paymentsTable() . " WHERE orders_id = " . (int)$ordersId . " ORDER BY id DESC LIMIT 1");
+            return $result->EOF ? null : $result->fields;
+        }
+
+        /**
+         * Update status (and order id). A final status (ok / cancelled) is not overwritten
+         * by a late or repeated callback, only by an explicit admin action ($force).
+         */
+        public function setPaymentStatus(string $transactionId, string $status, string $provider = '', int $ordersId = 0, bool $force = false)
+        {
+            global $db;
+            $row = $this->getPayment($transactionId);
+            if ($row === null) {
+                return;
+            }
+            $set = ["last_modified = now()"];
+            if ($status !== '' && ($force || !in_array($row['status'], ['ok', 'cancelled'], true) || $status === $row['status'])) {
+                $set[] = "status = '" . zen_db_input(substr($status, 0, 32)) . "'";
+            }
+            if ($provider !== '') {
+                $set[] = "provider = '" . zen_db_input(substr($provider, 0, 64)) . "'";
+            }
+            if ($ordersId > 0) {
+                $set[] = "orders_id = " . (int)$ordersId;
+            }
+            $db->Execute("UPDATE " . $this->paymentsTable() . " SET " . implode(', ', $set) . " WHERE id = " . (int)$row['id']);
+        }
+
+        /**
+         * Fresh status from the Paytrail API -> table. Returns the status or '' on API error.
+         */
+        public function recheckPayment(string $transactionId): string
+        {
+            global $db;
+            $result = $this->getPaymentStatus($transactionId);
+            if (!is_array($result) || empty($result['status'])) {
+                return '';
+            }
+            $this->setPaymentStatus($transactionId, (string)$result['status'], (string)($result['provider'] ?? ''));
+            $sql = "UPDATE " . $this->paymentsTable() . " SET last_checked = now() WHERE transaction_id = :tx";
+            $db->Execute($db->bindVars($sql, ':tx', $transactionId, 'string'));
+            return (string)$result['status'];
+        }
+
+        /**
+         * Callback (server to server): status from Paytrail.
+         * - order exists: pending -> ok updates the order status, fail adds a warning
+         * - paid but NO order (customer did not come back, OP mobile app, other browser):
+         *   e-mail to the store owner once
+         * Callbacks may come several times, so this is idempotent.
+         */
+        public function updateOrderFromCallback(string $transactionId, string $status, string $provider = '')
+        {
+            $row = $this->getPayment($transactionId);
+            if ($row === null || $status === '') {
+                return;
+            }
+            $oldStatus = $row['status'];
+            $ordersId  = (int)$row['orders_id'];
+
+            if ($ordersId > 0 && $oldStatus !== $status && !in_array($oldStatus, ['ok', 'cancelled'], true)) {
+                if ($status === 'ok') {
+                    zen_update_orders_history($ordersId, MODULE_PAYMENT_PAYTRAIL_TITLE_STATUS . MODULE_PAYMENT_PAYTRAIL_PAYMENT_OK . ' (Paytrail callback)', 'Paytrail', $this->paidOrderStatusId(), 0);
+                } elseif ($status === 'fail') {
+                    zen_update_orders_history($ordersId, MODULE_PAYMENT_PAYTRAIL_TITLE_STATUS . MODULE_PAYMENT_PAYTRAIL_PAYMENT_FAIL . ' (Paytrail callback) - ' . MODULE_PAYMENT_PAYTRAIL_CHECK_ORDER, 'Paytrail', -1, 0);
+                }
+            }
+
+            $this->setPaymentStatus($transactionId, $status, $provider);
+
+            if ($ordersId === 0 && in_array($status, ['ok', 'pending', 'delayed'], true) && (int)$row['admin_notified'] === 0) {
+                $row['status']   = $status;
+                $row['provider'] = $provider !== '' ? $provider : $row['provider'];
+                $this->notifyPaidWithoutOrder($row);
+            }
+        }
+
+        /**
+         * E-mail to the store owner: payment received but the order was not created.
+         */
+        protected function notifyPaidWithoutOrder(array $row)
+        {
+            global $db;
+            $db->Execute("UPDATE " . $this->paymentsTable() . " SET admin_notified = 1 WHERE id = " . (int)$row['id']);
+
+            $lines   = [];
+            $lines[] = MODULE_PAYMENT_PAYTRAIL_NO_ORDER_INTRO;
+            $lines[] = '';
+            $lines[] = 'Transaction ID: ' . $row['transaction_id'];
+            $lines[] = MODULE_PAYMENT_PAYTRAIL_REFERENCE_NUMBER . $row['reference'];
+            $lines[] = MODULE_PAYMENT_PAYTRAIL_TITLE_STATUS . $row['status'] . '  /  ' . MODULE_PAYMENT_PAYTRAIL_PAYMENT_METHOD . $row['provider'];
+            $lines[] = MODULE_PAYMENT_PAYTRAIL_NO_ORDER_AMOUNT . number_format($row['amount'] / 100, 2, ',', ' ') . ' ' . $row['currency'];
+            $lines[] = MODULE_PAYMENT_PAYTRAIL_NO_ORDER_CUSTOMER . $row['customer_name'] . ' <' . $row['customer_email'] . '> (ID ' . (int)$row['customers_id'] . ')';
+            $lines[] = MODULE_PAYMENT_PAYTRAIL_NO_ORDER_CREATED . $row['date_added'];
+
+            $snapshot = json_decode((string)$row['cart_snapshot'], true);
+            if (is_array($snapshot)) {
+                $lines[] = '';
+                if (!empty($snapshot['telephone'])) $lines[] = 'Tel: ' . $snapshot['telephone'];
+                if (!empty($snapshot['delivery']))  $lines[] = MODULE_PAYMENT_PAYTRAIL_NO_ORDER_DELIVERY . $snapshot['delivery'];
+                if (!empty($snapshot['shipping']))  $lines[] = MODULE_PAYMENT_PAYTRAIL_NO_ORDER_SHIPPING . $snapshot['shipping'];
+                $lines[] = '';
+                foreach ((array)($snapshot['products'] ?? []) as $product) {
+                    $line = $product['qty'] . ' x ' . $product['name'] . ' - ' . number_format((float)$product['price'], 2, ',', ' ') . ' EUR';
+                    if (!empty($product['attributes'])) {
+                        $line .= ' (' . implode(', ', $product['attributes']) . ')';
+                    }
+                    $lines[] = $line;
+                }
+                if (!empty($snapshot['comments'])) {
+                    $lines[] = '';
+                    $lines[] = $snapshot['comments'];
+                }
+            }
+            $lines[] = '';
+            $lines[] = MODULE_PAYMENT_PAYTRAIL_NO_ORDER_ACTION;
+
+            $text = implode("\n", $lines);
+            if (function_exists('zen_mail')) {
+                zen_mail(STORE_NAME, STORE_OWNER_EMAIL_ADDRESS, MODULE_PAYMENT_PAYTRAIL_NO_ORDER_SUBJECT . ' ' . $row['reference'], $text, STORE_NAME, EMAIL_FROM, ['EMAIL_MESSAGE_HTML' => nl2br(zen_output_string_protected($text))], 'default');
+            }
+            error_log('Paytrail: payment ' . $row['transaction_id'] . ' (' . $row['status'] . ') has no order - store owner notified');
+        }
+
+        /**
+         * Customer is back on checkout_payment in the same session: was one of the
+         * session's payments paid after all (OP mobile app etc.)? Then create the order.
+         */
+        protected function recoverPaidPayment()
+        {
+            global $order, $messageStack;
+            static $done = false;
+            $empList = $this->empPaidWithoutOrder();
+            if ($done || (empty($_SESSION['paytrail_transactions']) && empty($empList))) {
+                return;
+            }
+            $done  = true;
+            $tried = $_SESSION['paytrail_recover_tried'] ?? [];
+            $checks = 0;
+            $isEmp  = !empty($empList);
+
+            $candidates = array_unique(array_merge($empList, array_reverse($_SESSION['paytrail_transactions'] ?? [])));
+            foreach ($candidates as $transactionId) {
+                if (isset($tried[$transactionId])) {
+                    continue;
+                }
+                $row = $this->getPayment($transactionId);
+                if ($row === null || (int)$row['orders_id'] > 0) {
+                    continue;
+                }
+                $status = $row['status'];
+                // Not known yet: ask Paytrail (max 3 recent payments, younger than 1 hour)
+                if ($status === 'new' && $checks < 3 && strtotime($row['date_added']) > time() - 3600) {
+                    $checks++;
+                    $status = $this->recheckPayment($transactionId) ?: $status;
+                }
+                if (!in_array($status, ['ok', 'pending', 'delayed'], true)) {
+                    continue;
+                }
+                $cartAmount = is_object($order) ? (int)round((float)$order->info['total'] * 100) : 0;
+                if ($cartAmount === (int)$row['amount']) {
+                    $_SESSION['paytrail_recover_tried'][$transactionId] = true;
+                    zen_redirect(zen_href_link(FILENAME_CHECKOUT_PROCESS, 'paytrail_tx=' . urlencode($transactionId), 'SSL', true, false));
+                }
+                // Admin as customer: tell why, can be retried (e.g. choose the same shipping method)
+                if ($isEmp && in_array($transactionId, $empList, true)) {
+                    if (is_object($messageStack)) {
+                        $messageStack->add('checkout_payment', sprintf(MODULE_PAYMENT_PAYTRAIL_EMP_AMOUNT_DIFFERS, $row['reference'], number_format($row['amount'] / 100, 2, ',', ' '), number_format($cartAmount / 100, 2, ',', ' ')), 'caution');
+                    }
+                    continue;
+                }
+                $_SESSION['paytrail_recover_tried'][$transactionId] = true;
+                // Cart changed after the payment: do not create a wrong order automatically
+                if (is_object($messageStack)) {
+                    $messageStack->add('checkout_payment', sprintf(MODULE_PAYMENT_PAYTRAIL_PAID_CART_CHANGED, $row['reference']), 'caution');
+                }
+                if ((int)$row['admin_notified'] === 0) {
+                    $this->notifyPaidWithoutOrder($row);
+                }
+            }
+        }
+
+        /**
+         * Admin order page: payment info + activation / cancel buttons for pending (invoice) payments.
+         * Zen Cart admin orders.php shows admin_notification() and runs the doCapture / doVoid actions.
+         */
+        function admin_notification($zf_order_id)
+        {
+            $row = $this->getPaymentByOrder((int)$zf_order_id);
+            if ($row === null) {
+                return '';
+            }
+            $html  = '<div class="paytrail-admin" style="border:1px solid #ccc; padding:10px; margin:10px 0">';
+            $html .= '<strong>Paytrail</strong> &nbsp; Transaction ID: ' . zen_output_string_protected($row['transaction_id'])
+                   . ' &nbsp; ' . MODULE_PAYMENT_PAYTRAIL_TITLE_STATUS . '<b>' . zen_output_string_protected($row['status']) . '</b>'
+                   . ($row['provider'] !== '' ? ' &nbsp; (' . zen_output_string_protected($row['provider']) . ')' : '')
+                   . ' &nbsp; ' . number_format($row['amount'] / 100, 2, ',', ' ') . ' ' . zen_output_string_protected($row['currency']);
+
+            if (in_array($row['status'], ['pending', 'delayed'], true)) {
+                $html .= '<br><br>' . MODULE_PAYMENT_PAYTRAIL_ADMIN_PENDING_INFO . '<br>';
+                $html .= zen_draw_form('paytrail_capture', FILENAME_ORDERS, zen_get_all_get_params(['action']) . 'action=doCapture', 'post', 'style="display:inline" onsubmit="return confirm(\'' . addslashes(MODULE_PAYMENT_PAYTRAIL_ADMIN_ACTIVATE_CONFIRM) . '\');"');
+                $html .= '<button type="submit" class="btn btn-success btn-sm">' . MODULE_PAYMENT_PAYTRAIL_ADMIN_ACTIVATE . '</button></form> &nbsp; ';
+                $html .= zen_draw_form('paytrail_void', FILENAME_ORDERS, zen_get_all_get_params(['action']) . 'action=doVoid', 'post', 'style="display:inline" onsubmit="return confirm(\'' . addslashes(MODULE_PAYMENT_PAYTRAIL_ADMIN_CANCEL_CONFIRM) . '\');"');
+                $html .= '<button type="submit" class="btn btn-danger btn-sm">' . MODULE_PAYMENT_PAYTRAIL_ADMIN_CANCEL . '</button></form>';
+                $html .= '<br><small>' . MODULE_PAYMENT_PAYTRAIL_ADMIN_CANCEL_INFO . '</small>';
+            }
+            $html .= '</div>';
+            return $html;
+        }
+
+        protected function adminName(): string
+        {
+            return (isset($_SESSION['admin_id']) && function_exists('zen_get_admin_name')) ? (string)zen_get_admin_name($_SESSION['admin_id']) : 'Admin';
+        }
+
+        /**
+         * Admin: activate (capture) a pending invoice payment.  POST /payments/{id}/capture-order
+         */
+        function _doCapt($oID, $captureType = 'Complete', $amt = 0, $currency = 'EUR', $note = '')
+        {
+            global $messageStack;
+            $row = $this->getPaymentByOrder((int)$oID);
+            if ($row === null || !in_array($row['status'], ['pending', 'delayed'], true)) {
+                $messageStack->add_session(MODULE_PAYMENT_PAYTRAIL_ADMIN_NOT_PENDING, 'error');
+                return false;
+            }
+            $tx     = $row['transaction_id'];
+            $result = $this->apiPost('/payments/' . rawurlencode($tx) . '/capture-order', '', $tx);
+
+            if ($result['ok'] && $result['code'] == 200 && (($result['data']->status ?? '') === 'ok')) {
+                $this->setPaymentStatus($tx, 'ok', '', 0, true);
+                zen_update_orders_history((int)$oID, MODULE_PAYMENT_PAYTRAIL_TITLE_STATUS . MODULE_PAYMENT_PAYTRAIL_PAYMENT_ACTIVATED, $this->adminName(), $this->paidOrderStatusId(), 0);
+                $messageStack->add_session(MODULE_PAYMENT_PAYTRAIL_PAYMENT_ACTIVATED, 'success');
+                return true;
+            }
+            $msg = $result['data']->message ?? ('HTTP ' . $result['code']);
+            error_log('Paytrail capture-order failed: ' . substr($result['raw'], 0, 500));
+            $messageStack->add_session(MODULE_PAYMENT_PAYTRAIL_ADMIN_ACTIVATE_FAILED . ' ' . zen_output_string_protected((string)$msg), 'error');
+            return false;
+        }
+
+        /**
+         * Admin: cancel a pending Klarna payment (releases the authorization hold).  POST /payments/{id}/cancel-order
+         * Walley invoices have no authorization hold: they are simply not activated.
+         */
+        function _doVoid($oID, $note = '')
+        {
+            global $messageStack;
+            $row = $this->getPaymentByOrder((int)$oID);
+            if ($row === null || !in_array($row['status'], ['pending', 'delayed'], true)) {
+                $messageStack->add_session(MODULE_PAYMENT_PAYTRAIL_ADMIN_NOT_PENDING, 'error');
+                return false;
+            }
+            $tx     = $row['transaction_id'];
+            $result = $this->apiPost('/payments/' . rawurlencode($tx) . '/cancel-order', '', $tx);
+
+            if ($result['ok'] && in_array((int)$result['code'], [200, 201, 202], true)) {
+                $this->setPaymentStatus($tx, 'cancelled', '', 0, true);
+                zen_update_orders_history((int)$oID, MODULE_PAYMENT_PAYTRAIL_TITLE_STATUS . MODULE_PAYMENT_PAYTRAIL_PAYMENT_CANCELLED, $this->adminName(), -1, 0);
+                $messageStack->add_session(MODULE_PAYMENT_PAYTRAIL_PAYMENT_CANCELLED, 'success');
+                return true;
+            }
+            $msg = $result['data']->message ?? ('HTTP ' . $result['code']);
+            error_log('Paytrail cancel-order failed: ' . substr($result['raw'], 0, 500));
+            $messageStack->add_session(MODULE_PAYMENT_PAYTRAIL_ADMIN_CANCEL_FAILED . ' ' . zen_output_string_protected((string)$msg), 'error');
+            return false;
+        }
+
+        // ---------------- Saved cards (DB) ----------------
+
+        public function cardSavingEnabled(): bool
+        {
+            return defined('MODULE_PAYMENT_PAYTRAIL_SAVE_CARD') && MODULE_PAYMENT_PAYTRAIL_SAVE_CARD == 'True';
+        }
+
+        public function getLoggedInCustomerId(): int
+        {
+            if (empty($_SESSION['customer_id'])) {
+                return 0;
+            }
+            // Guest checkout (OPC) customers can not save cards
+            if (!empty($_SESSION['COWOA']) || (function_exists('zen_in_guest_checkout') && zen_in_guest_checkout())) {
+                return 0;
+            }
+            return (int)$_SESSION['customer_id'];
+        }
+
+        public function ensureCardTable()
+        {
+            global $db;
+            static $done = false;
+            if ($done) {
+                return;
+            }
+            $db->Execute("CREATE TABLE IF NOT EXISTS " . $this->cardsTable . " (
+                id int(11) NOT NULL AUTO_INCREMENT,
+                customers_id int(11) NOT NULL,
+                token varchar(255) NOT NULL,
+                card_type varchar(32) NOT NULL DEFAULT '',
+                partial_pan varchar(4) NOT NULL DEFAULT '',
+                expire_month varchar(2) NOT NULL DEFAULT '',
+                expire_year varchar(4) NOT NULL DEFAULT '',
+                card_fingerprint varchar(64) NOT NULL DEFAULT '',
+                date_added datetime NOT NULL,
+                PRIMARY KEY (id),
+                KEY idx_customers_id (customers_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            $db->Execute("CREATE TABLE IF NOT EXISTS " . DB_PREFIX . "paytrail_payments (
+                id int(11) NOT NULL AUTO_INCREMENT,
+                transaction_id varchar(64) NOT NULL,
+                stamp varchar(64) NOT NULL DEFAULT '',
+                reference varchar(32) NOT NULL DEFAULT '',
+                customers_id int(11) NOT NULL DEFAULT 0,
+                customer_email varchar(96) NOT NULL DEFAULT '',
+                customer_name varchar(128) NOT NULL DEFAULT '',
+                orders_id int(11) NOT NULL DEFAULT 0,
+                amount int(11) NOT NULL DEFAULT 0,
+                currency char(3) NOT NULL DEFAULT 'EUR',
+                method varchar(16) NOT NULL DEFAULT 'payment',
+                provider varchar(64) NOT NULL DEFAULT '',
+                status varchar(32) NOT NULL DEFAULT 'new',
+                cart_snapshot mediumtext,
+                session_id varchar(128) NOT NULL DEFAULT '',
+                admin_notified tinyint(1) NOT NULL DEFAULT 0,
+                date_added datetime NOT NULL,
+                last_modified datetime NOT NULL,
+                last_checked datetime NULL DEFAULT NULL,
+                PRIMARY KEY (id),
+                UNIQUE KEY uq_transaction_id (transaction_id),
+                KEY idx_customers_id (customers_id),
+                KEY idx_orders_id (orders_id),
+                KEY idx_status (status, orders_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            $done = true;
+        }
+
+        public function getCustomerCards(int $customerId): array
+        {
+            global $db;
+            $this->ensureCardTable();
+            $cards  = [];
+            $result = $db->Execute("SELECT * FROM " . $this->cardsTable . " WHERE customers_id = " . (int)$customerId . " ORDER BY date_added DESC");
+            while (!$result->EOF) {
+                if (!$this->cardExpired($result->fields)) {
+                    $cards[] = $result->fields;
+                }
+                $result->MoveNext();
+            }
+            return $cards;
+        }
+
+        public function getCustomerCard(int $customerId, int $cardId): ?array
+        {
+            global $db;
+            $this->ensureCardTable();
+            $result = $db->Execute("SELECT * FROM " . $this->cardsTable . " WHERE id = " . (int)$cardId . " AND customers_id = " . (int)$customerId . " LIMIT 1");
+            if ($result->EOF || $this->cardExpired($result->fields)) {
+                return null;
+            }
+            return $result->fields;
+        }
+
+        /**
+         * Save card token. Same card (fingerprint) is updated, not duplicated.
+         */
+        public function saveCustomerCard(int $customerId, string $token, array $card)
+        {
+            global $db;
+            if ($customerId < 1 || $token === '') {
+                return;
+            }
+            $this->ensureCardTable();
+
+            $data = [
+                'card_type'        => substr(preg_replace('/[^A-Za-z0-9 _-]/', '', (string)($card['type'] ?? '')), 0, 32),
+                'partial_pan'      => substr(preg_replace('/\D/', '', (string)($card['partial_pan'] ?? '')), -4),
+                'expire_month'     => substr(preg_replace('/\D/', '', (string)($card['expire_month'] ?? '')), 0, 2),
+                'expire_year'      => substr(preg_replace('/\D/', '', (string)($card['expire_year'] ?? '')), 0, 4),
+                'card_fingerprint' => substr(preg_replace('/[^A-Fa-f0-9]/', '', (string)($card['card_fingerprint'] ?? '')), 0, 64),
+            ];
+
+            $existing = null;
+            $sql = "SELECT id FROM " . $this->cardsTable . " WHERE customers_id = :cid AND (token = :token" . ($data['card_fingerprint'] !== '' ? " OR card_fingerprint = :fp" : "") . ") LIMIT 1";
+            $sql = $db->bindVars($sql, ':cid', $customerId, 'integer');
+            $sql = $db->bindVars($sql, ':token', $token, 'string');
+            $sql = $db->bindVars($sql, ':fp', $data['card_fingerprint'], 'string');
+            $check = $db->Execute($sql);
+            if (!$check->EOF) {
+                $existing = (int)$check->fields['id'];
+            }
+
+            $sqlData = [
+                ['fieldName' => 'customers_id',     'value' => $customerId,               'type' => 'integer'],
+                ['fieldName' => 'token',            'value' => $token,                    'type' => 'string'],
+                ['fieldName' => 'card_type',        'value' => $data['card_type'],        'type' => 'string'],
+                ['fieldName' => 'partial_pan',      'value' => $data['partial_pan'],      'type' => 'string'],
+                ['fieldName' => 'expire_month',     'value' => $data['expire_month'],     'type' => 'string'],
+                ['fieldName' => 'expire_year',      'value' => $data['expire_year'],      'type' => 'string'],
+                ['fieldName' => 'card_fingerprint', 'value' => $data['card_fingerprint'], 'type' => 'string'],
+                ['fieldName' => 'date_added',       'value' => 'now()',                   'type' => 'noquotestring'],
+            ];
+
+            if ($existing) {
+                $db->perform($this->cardsTable, $sqlData, 'UPDATE', 'id = ' . $existing);
+            } else {
+                $db->perform($this->cardsTable, $sqlData);
+            }
+        }
+
+        public function deleteCustomerCard(int $customerId, int $cardId)
+        {
+            global $db;
+            $this->ensureCardTable();
+            $db->Execute("DELETE FROM " . $this->cardsTable . " WHERE id = " . (int)$cardId . " AND customers_id = " . (int)$customerId);
+        }
+
+        protected function cardExpired(array $card): bool
+        {
+            $year  = (int)($card['expire_year'] ?? 0);
+            $month = (int)($card['expire_month'] ?? 0);
+            if ($year < 1 || $month < 1) {
+                return false; // unknown expiry
+            }
+            if ($year < 100) {
+                $year += 2000;
+            }
+            return ($year * 100 + $month) < (int)date('Ym');
+        }
+
+        public function cardLabel(array $card): string
+        {
+            $label = trim(($card['card_type'] ?? '') . ' **** ' . ($card['partial_pan'] ?? ''));
+            if (!empty($card['expire_month']) && !empty($card['expire_year'])) {
+                $label .= ' (' . str_pad($card['expire_month'], 2, '0', STR_PAD_LEFT) . '/' . substr($card['expire_year'], -2) . ')';
+            }
+            return zen_output_string_protected($label);
+        }
+
 		// Stamp random trans id
 		public function generate_uuid() 
 		{
@@ -1236,33 +2451,68 @@ class paytrail extends base
             return hash_hmac('sha256', join("\n", $hmacPayload), $secretKey);		
         }
 
-        public function validateHmac(array $params = [], string $body = '', string $signature = '', string $secretKey = '') 
+        public function validateHmac(array $params = [], string $body = '', string $signature = '', string $secretKey = ''): bool 
 		{
-           $hmac = $this->calculateHmac($params, $body, $secretKey);  
-           if ($hmac !== $signature) {
-               throw new HmacException('HMAC signature is invalid.', 401);
+           if ($signature === '') {
+               return false;
            }
-        }	
+           $hmac = $this->calculateHmac($params, $body, $secretKey);  
+           return hash_equals($hmac, $signature);
+        }
+
+        /**
+         * Check signature of redirect / callback query string parameters (empty body).
+         */
+        public function validateRedirectSignature(array $params): bool
+        {
+            $signature = isset($params['signature']) ? (string)$params['signature'] : '';
+            $checkoutParams = [];
+            foreach ($params as $key => $value) {
+                if (is_string($key) && strpos($key, 'checkout-') === 0 && !is_array($value)) {
+                    $checkoutParams[$key] = (string)$value;
+                }
+            }
+            if (($checkoutParams['checkout-account'] ?? '') !== (string)$this->merchantId) {
+                return false;
+            }
+            return $this->validateHmac($checkoutParams, '', $signature, (string)$this->secretKey);
+        }
   
         /**
         * Get Paytrail payment status
         */
         public function getPaymentStatus($transactionId) {
-            $url = $this->form_action_url . '/' . $transactionId;
+            $url = $this->apiBase . '/payments/' . rawurlencode($transactionId);
             $headers = $this->getHeaders('GET',$transactionId);
 
             $headers['signature'] = $this->calculateHmac($headers,'',$this->secretKey);
 
             $client = new \GuzzleHttp\Client([
-                'headers'=>$headers
+                'headers'     => $headers,
+                'http_errors' => false,
+                'timeout'     => 15,
             ]);
 
             try {
                 $response = $client->get($url);
+                $body = (string)$response->getBody();
 
-                return json_decode($response->getBody()->getContents(), true);
+                $responseHeaders = [];
+                foreach ($response->getHeaders() as $name => $values) {
+                    $responseHeaders[strtolower($name)] = $values[0] ?? '';
+                }
+                if (!$this->validateHmac($responseHeaders, $body, $responseHeaders['signature'] ?? '', (string)$this->secretKey)) {
+                    error_log('Paytrail status: response HMAC signature mismatch');
+                    return false;
+                }
+                if ($response->getStatusCode() != 200) {
+                    error_log('Paytrail status: HTTP ' . $response->getStatusCode() . ' ' . substr($body, 0, 300));
+                    return false;
+                }
 
-            } catch(\Exception $e){
+                return json_decode($body, true);
+
+            } catch(\Throwable $e){
                 error_log("Paytrail status error: ".$e->getMessage());
 
                 return false;
@@ -1283,8 +2533,10 @@ class paytrail extends base
                 JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT
             );
 
+            // After a successful check the order is created in checkout_process,
+            // where the transaction is verified again server side with the Paytrail API.
             $successAddressJs = json_encode(
-                $this->success_address,
+                zen_href_link(FILENAME_CHECKOUT_PROCESS, 'paytrail_tx=' . urlencode($transactionId), 'SSL', true, false),
                 JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT
             );
 
@@ -1295,7 +2547,7 @@ class paytrail extends base
 
             echo '
             <!DOCTYPE html>
-            <html lang="tr">
+            <html lang="' . ($this->language == 'FI' ? 'fi' : 'en') . '">
             <head>
                 <meta charset="utf-8">
                 <title>' .MODULE_PAYMENT_PAYTRAIL_PAYMENT_STATUS_TITLE .'</title>
@@ -1339,15 +2591,16 @@ class paytrail extends base
                 <div class="box">
                     <h2>' .MODULE_PAYMENT_PAYTRAIL_RETURN_PAYMENT_CHECKING .'</h2>
                     <p>'. MODULE_PAYMENT_PAYTRAIL_RETURN_PAYMENT_CHECKING_INFO .'</p>
-                    <div id="counter">40</div>
+                    <div id="counter">' . (int)$this->statusWaitSeconds . '</div>
                 </div>
 
                 <script>
                     const transactionId = ' . $transactionIdJs . ';
                     const successAddress = ' . $successAddressJs . ';
                     const cancelAddress = ' . $cancelAddressJs . ';
+                    const statusUrl = ' . json_encode(zen_href_link('paytrail_status', '', 'SSL', true, false), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES) . ';
 
-                    let second = 40;
+                    let second = ' . (int)$this->statusWaitSeconds . ';
                     let checking = false;
                     let finished = false;
 
@@ -1375,7 +2628,7 @@ class paytrail extends base
                         checking = true;
 
                         fetch(
-                            "index.php?main_page=paytrail_status&transactionId=" +
+                            statusUrl + "&transactionId=" +
                             encodeURIComponent(transactionId)
                         )
                         .then(function (response) {
@@ -1384,7 +2637,8 @@ class paytrail extends base
                         .then(function (data) {
                             console.log(data);
 
-                            if (data["checkout-status"] === "ok") {
+                            // ok = paid, pending/delayed = approved, waiting activation/processing
+                            if (["ok", "pending", "delayed"].indexOf(data["checkout-status"]) !== -1) {
                                 finished = true;
                                 window.location.href = successAddress;
                                 return;
@@ -1419,12 +2673,12 @@ class paytrail extends base
                         second--;
                         document.getElementById("counter").innerHTML = second;
 
-                        // 10, 20, 30, 40 ve 50. it is checked in seconds.
+                        // Checked every 10 seconds (20 and 10 seconds left)
                         if (second > 0 && second % 10 === 0) {
                             checkStatus();
                         }
 
-                        // 60 it is checked one last time at the end of the seconds.
+                        // Checked one last time when the 30 seconds are over.
                         if (second <= 0) {
                             clearInterval(timer);
                             checkStatus(true);
