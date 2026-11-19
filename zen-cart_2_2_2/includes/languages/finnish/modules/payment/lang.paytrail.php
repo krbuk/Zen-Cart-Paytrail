@@ -21,7 +21,7 @@ $define = [
 	'MODULE_PAYMENT_PAYTRAIL_SELECET_PAYMENT' => 'Valitse maksutapa',
 	'MODULE_PAYMENT_PAYTRAIL_TITLE_STATUS' => 'Maksun tila: ', 
 	'MODULE_PAYMENT_PAYTRAIL_PAYMENT_METHOD' => 'Maksutapa: ',
-	'MODULE_PAYMENT_PAYTRAIL_REFERENCE_NUMBER' => 'Viitenumero : ',
+	'MODULE_PAYMENT_PAYTRAIL_REFERENCE_NUMBER' => 'Kauppiaan viite: ',
 	'MODULE_PAYMENT_PAYTRAIL_PAYMENT_ERROR' => 'Virhe! Paytrail verkkomaksupalvelu ei vastaa. ',
 	'MODULE_PAYMENT_PAYTRAIL_SELECET_OTHER' => 'Kilikka takaisin nappi ja valitse muu maksutapa',
 	// Payment information
@@ -44,7 +44,7 @@ $define = [
 	'MODULE_PAYMENT_PAYTRAIL_RETURN_PAYMENT_FAIL' => 'Maksu epäonnistui.',
 	'MODULE_PAYMENT_PAYTRAIL_RETURN_PAYMENT_FAIL_INFO' => 'Maksuprosessia ei voitu suorittaa loppuun. <br>Yritä käyttää toista maksutapaa.',
 	'MODULE_PAYMENT_PAYTRAIL_RETURN_PAYMENT_SELECT_BUTTON' => 'Valitse toinen maksutapa',
-	// Tallennetut kortit (tokenisointi) v5.7.0
+	// Tallennetut kortit (tokenisointi) v5.8.0
 	'MODULE_PAYMENT_PAYTRAIL_CARD_OTHER_METHOD' => 'Maksa muulla maksutavalla (pankki, mobiili, kortti)',
 	'MODULE_PAYMENT_PAYTRAIL_CARD_PAY_WITH' => 'Maksa tallennetulla kortilla',
 	'MODULE_PAYMENT_PAYTRAIL_CARD_SAVE_NEW' => 'Maksa kortilla ja tallenna kortti tulevia ostoksia varten',

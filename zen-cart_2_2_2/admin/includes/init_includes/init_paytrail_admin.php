@@ -1,6 +1,6 @@
 <?php
 /**
- * Paytrail module v5.7.0 - register admin page "Paytrail Payments" under Customers if missing.
+ * Paytrail module v5.8.0 - register admin page "Paytrail Payments" under Customers if missing.
  */
 if (!defined('IS_ADMIN_FLAG')) {
     die('Illegal Access');

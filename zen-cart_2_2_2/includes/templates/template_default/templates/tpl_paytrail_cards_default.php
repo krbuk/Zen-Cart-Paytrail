@@ -2,7 +2,7 @@
 /**
  * Template: My saved Paytrail cards
  * Copy to includes/templates/YOUR_TEMPLATE/templates/ to customize.
- * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2026 Nov 14 v5.7.0
+ * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2026 Nov 19 v5.8.0
  */
 ?>
 <div class="centerColumn" id="paytrailCardsDefault">
