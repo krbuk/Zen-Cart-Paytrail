@@ -35,5 +35,8 @@ $define = [
     'PT_EMP_INFO' => 'Open the store as the customer, choose the same shipping method and continue to the payment page. The paid Paytrail payment (%s EUR) is used automatically - the customer is NOT charged again. The order is created normally (stock, e-mails, printing).',
     'PT_EMP_OPEN_STORE' => 'Open the store as the customer',
     'PT_EMP_NOT_AUTHORIZED' => 'Your admin profile is not allowed to place orders for customers (Configuration -> Customer Details -> Customer Place Order).',
+    'PT_RECHECK_CONFIRM' => 'Check the payment at Paytrail? If it is paid and has no order, the order is created automatically from the saved cart with the paid amount.',
+    'PT_RECHECK_TOO_NEW' => 'The payment is less than 5 minutes old - the customer may still be completing the order. Check again in a few minutes.',
+    'PT_RECHECK_AMOUNT_DIFFERS' => 'Paytrail amount %s EUR differs from the saved amount %s EUR - order NOT created automatically. Check the payment in the Paytrail merchant panel.',
 ];
 return $define;

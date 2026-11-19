@@ -15,7 +15,7 @@ Before account activation use test mode if Okay call to Paytrail customer servic
  * Alternatively, if you can't install composer packages you can use http://php.net/manual/en/book.curl.php	
  * @copyright Copyright 2003-2019 Zen Cart Development Team
  * @license http://www.zen-cart.com/license/2_0.txt GNU Public License V2.0
- * @version $Id: Nida Verkkopalvelu (www.nida.fi) / Krbuk 2026 Nov 19 Modified in v5.8.0
+ * @version $Id: Nida Verkkopalvelu (www.nida.fi) / Krbuk 2026 Nov 20 Modified in v5.8.1
  * Providers selection in checkout page or redirect to paytrail payment page
  * Payment status check: waiting page max 30 seconds, status checked every 10 seconds.
  * Card tokenization (saved cards), Paytrail payments table, pending invoices, Shop-in-Shop.
@@ -56,6 +56,12 @@ Before account activation use test mode if Okay call to Paytrail customer servic
 
 
 ## Changelog
+
+### v5.8.1 (2026-11-20)
+- Admin → Paytrail Payments → **Check again**: when Paytrail reports the payment as paid (`ok` / `pending` / `delayed`) and there is no order, the order is created automatically from the saved order copy with the paid amount.
+  - Matched by Transaction ID and Paytrail's own amount (GET `/payments/{id}`), not by a recalculated cart (a rebuilt cart can give a different total because of shipping, fees or reward points).
+  - Not done when the payment is less than 5 minutes old (the customer may still be returning to the store) or when Paytrail's amount differs from the saved amount.
+  - The button asks for confirmation on payments without an order.
 
 ### v5.8.0 (2026-11-19)
 

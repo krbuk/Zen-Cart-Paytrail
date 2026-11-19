@@ -40,6 +40,29 @@ if ($paytrail !== null && $_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST
             $messageStack->add_session(PT_RECHECK_FAILED, 'error');
         } else {
             $messageStack->add_session(sprintf(PT_RECHECK_DONE, zen_output_string_protected($status)), 'success');
+
+            // Paid at Paytrail but no order: create it from the saved order copy.
+            // Matched by Transaction ID and Paytrail's own amount - NOT by a recalculated cart
+            // (shipping / fees / points may give a different total when the cart is rebuilt).
+            $row = $paytrail->getPayment($tx);
+            $saved = ($row !== null) ? json_decode((string)$row['cart_snapshot'], true) : null;
+            if ($row !== null && (int)$row['orders_id'] === 0 && in_array($status, ['ok', 'pending', 'delayed'], true) && !empty($saved['full'])) {
+                $paidAmount = (int)($paytrail->lastApiStatus['amount'] ?? -1);
+                if (strtotime($row['date_added']) > time() - 300) {
+                    // the customer may still be on his way back to the store
+                    $messageStack->add_session(PT_RECHECK_TOO_NEW, 'caution');
+                } elseif ($paidAmount !== (int)$row['amount']) {
+                    $messageStack->add_session(sprintf(PT_RECHECK_AMOUNT_DIFFERS, number_format($paidAmount / 100, 2, ',', ' '), number_format($row['amount'] / 100, 2, ',', ' ')), 'error');
+                } else {
+                    $ordersId = $paytrail->createOrderFromPayment($tx, true);
+                    if ($ordersId > 0) {
+                        zen_record_admin_activity('Paytrail: order ' . $ordersId . ' created by "check again" from payment ' . $tx, 'warning');
+                        $messageStack->add_session(sprintf(PT_ORDER_CREATED, $ordersId), 'success');
+                        zen_redirect(zen_href_link(FILENAME_ORDERS, 'oID=' . $ordersId . '&action=edit', 'NONSSL'));
+                    }
+                    $messageStack->add_session(sprintf(PT_ORDER_FAILED, zen_output_string_protected($paytrail->lastError)), 'error');
+                }
+            }
         }
     }
 
@@ -223,7 +246,7 @@ $statusColors = ['ok' => 'success', 'pending' => 'warning', 'delayed' => 'warnin
                 <?php } else { echo '-'; } ?>
               </td>
               <td class="dataTableContent text-right" style="white-space:nowrap">
-                <?php echo zen_draw_form('pt_recheck_' . (int)$row['id'], FILENAME_PAYTRAIL_PAYMENTS, $selfParams . '&action=recheck', 'post', 'style="display:inline"'); ?>
+                <?php echo zen_draw_form('pt_recheck_' . (int)$row['id'], FILENAME_PAYTRAIL_PAYMENTS, $selfParams . '&action=recheck', 'post', 'style="display:inline"' . (((int)$row['orders_id'] === 0 && in_array($row['status'], ['ok', 'pending', 'delayed', 'new'], true)) ? ' onsubmit="return confirm(\'' . addslashes(PT_RECHECK_CONFIRM) . '\');"' : '')); ?>
                   <?php echo zen_draw_hidden_field('tx', $row['transaction_id']); ?>
                   <button type="submit" class="btn btn-xs btn-default"><?php echo PT_RECHECK; ?></button>
                 </form>

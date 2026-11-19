@@ -35,5 +35,8 @@ $define = [
     'PT_EMP_INFO' => 'Avaa kauppa asiakkaana, valitse sama toimitustapa ja jatka maksusivulle. Maksettua Paytrail-maksua (%s EUR) käytetään automaattisesti - asiakasta EI veloiteta uudelleen. Tilaus luodaan normaalisti (varasto, sähköpostit, tulostus).',
     'PT_EMP_OPEN_STORE' => 'Avaa kauppa asiakkaana',
     'PT_EMP_NOT_AUTHORIZED' => 'Ylläpitäjäprofiilillasi ei ole oikeutta tehdä tilauksia asiakkaan puolesta (Configuration -> Customer Details -> Customer Place Order).',
+    'PT_RECHECK_CONFIRM' => 'Tarkistetaanko maksu Paytrailista? Jos se on maksettu eikä tilausta ole, tilaus luodaan automaattisesti tallennetusta ostoskorista maksetulla summalla.',
+    'PT_RECHECK_TOO_NEW' => 'Maksu on alle 5 minuuttia vanha - asiakas saattaa vielä viimeistellä tilausta. Tarkista uudelleen muutaman minuutin kuluttua.',
+    'PT_RECHECK_AMOUNT_DIFFERS' => 'Paytrailin summa %s EUR poikkeaa tallennetusta summasta %s EUR - tilausta EI luotu automaattisesti. Tarkista maksu Paytrail-kauppiaspaneelista.',
 ];
 return $define;

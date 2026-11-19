@@ -7,7 +7,7 @@
  * @copyright Portions Copyright 2003 osCommerce
  * @license   http://www.zen-cart.com/license/2_0.txt GNU Public License V2.0
  * @version $Id: piloujp 2025 Oct 10 Modified in v2.2.2 $
- * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2026 Nov 19 Modified in v5.8.0 (card tokenization, payments table, 30s status check)
+ * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2026 Nov 20 Modified in v5.8.1 (card tokenization, payments table, 30s status check)
  */
 
 // Paytrail module use vendors
@@ -120,7 +120,7 @@ class paytrail extends base
         /**
          *  For API module version
          */
-        public $moduleVersion = '5.8.0';      
+        public $moduleVersion = '5.8.1';      
         /**
          * $allowed_currencies is the valid Paytrail currency to use default EUR
          * @var string
@@ -2050,10 +2050,14 @@ class paytrail extends base
         /**
          * Fresh status from the Paytrail API -> table. Returns the status or '' on API error.
          */
+        /** Last GET /payments/{id} answer of recheckPayment() (status, amount, provider ...) */
+        public $lastApiStatus = [];
+
         public function recheckPayment(string $transactionId): string
         {
             global $db;
             $result = $this->getPaymentStatus($transactionId);
+            $this->lastApiStatus = is_array($result) ? $result : [];
             if (!is_array($result) || empty($result['status'])) {
                 return '';
             }
