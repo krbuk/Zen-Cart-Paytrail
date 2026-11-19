@@ -1785,6 +1785,17 @@ class paytrail extends base
                     'shipping_id'   => $_SESSION['shipping']['id'] ?? '',
                     'session_id'    => session_id(),
                 ],
+                // Checkout state that is NOT in the basket (restored for admin "Place Order"):
+                // shipping, coupon, gift voucher, reward points, comments, addresses
+                'restore'  => [
+                    'shipping'      => $_SESSION['shipping'] ?? null,
+                    'cc_id'         => $_SESSION['cc_id'] ?? null,
+                    'cot_gv'        => $_SESSION['cot_gv'] ?? null,
+                    'redeem_points' => $_SESSION['redeem_points'] ?? null,
+                    'comments'      => $_SESSION['comments'] ?? null,
+                    'sendto'        => $_SESSION['sendto'] ?? null,
+                    'billto'        => $_SESSION['billto'] ?? null,
+                ],
                 // Raw basket (same data as customers_basket) at the moment of payment
                 'cart'     => (isset($_SESSION['cart']) && is_object($_SESSION['cart'])) ? (array)$_SESSION['cart']->contents : [],
             ];
@@ -2148,6 +2159,76 @@ class paytrail extends base
         }
 
         /**
+         * Final order total in cents as the customer will see it on the confirmation page.
+         * On checkout_payment selection() runs BEFORE the order total modules have been
+         * processed, so $order->info['total'] does not yet contain coupons, gift vouchers,
+         * reward points or fees. Run them here and restore everything afterwards
+         * (order info + each module's output, otherwise the totals box shows lines twice).
+         */
+        protected function currentOrderTotalCents(): int
+        {
+            global $order, $order_total_modules;
+            if (!is_object($order)) {
+                return 0;
+            }
+            $total = (float)($order->info['total'] ?? 0);
+            if (is_object($order_total_modules) && method_exists($order_total_modules, 'process') && !empty($order_total_modules->modules)) {
+                $savedInfo    = $order->info;
+                $savedOutputs = [];
+                foreach ($order_total_modules->modules as $value) {
+                    $class = pathinfo($value, PATHINFO_FILENAME);
+                    if (isset($GLOBALS[$class]) && is_object($GLOBALS[$class]) && property_exists($GLOBALS[$class], 'output')) {
+                        $savedOutputs[$class] = $GLOBALS[$class]->output;
+                    }
+                }
+                try {
+                    foreach ($order_total_modules->process() as $line) {
+                        if (($line['code'] ?? '') === 'ot_total') {
+                            $total = (float)$line['value'];
+                        }
+                    }
+                } catch (\Throwable $e) {
+                    error_log('Paytrail: order total calculation failed: ' . $e->getMessage());
+                }
+                $order->info = $savedInfo;
+                foreach ($savedOutputs as $class => $output) {
+                    $GLOBALS[$class]->output = $output;
+                }
+            }
+            return (int)round($total * 100);
+        }
+
+        /**
+         * Admin "Place Order" (EMP) for a paid payment without an order: put the checkout
+         * state of the original payment back into the session once (shipping, coupon,
+         * gift voucher, reward points, comments, addresses) and reload checkout_payment,
+         * so the order total is calculated exactly like when the customer paid.
+         */
+        protected function restoreEmpCheckoutState(array $empList)
+        {
+            foreach ($empList as $transactionId) {
+                if (!empty($_SESSION['paytrail_emp_restored'][$transactionId])) {
+                    continue;
+                }
+                $row = $this->getPayment($transactionId);
+                $snapshot = ($row !== null) ? json_decode((string)$row['cart_snapshot'], true) : null;
+                $restore  = $snapshot['full']['restore'] ?? null;
+                $_SESSION['paytrail_emp_restored'][$transactionId] = true;
+                if (!is_array($restore)) {
+                    continue; // payment saved before v5.8.1: only the basket is available
+                }
+                foreach (['shipping', 'cc_id', 'cot_gv', 'redeem_points', 'comments', 'sendto', 'billto'] as $key) {
+                    if (array_key_exists($key, $restore) && $restore[$key] !== null && $restore[$key] !== '') {
+                        $_SESSION[$key] = $restore[$key];
+                    } else {
+                        unset($_SESSION[$key]);
+                    }
+                }
+                zen_redirect(zen_href_link(FILENAME_CHECKOUT_PAYMENT, '', 'SSL', true, false));
+            }
+        }
+
+        /**
          * Customer is back on checkout_payment in the same session: was one of the
          * session's payments paid after all (OP mobile app etc.)? Then create the order.
          */
@@ -2163,6 +2244,10 @@ class paytrail extends base
             $tried = $_SESSION['paytrail_recover_tried'] ?? [];
             $checks = 0;
             $isEmp  = !empty($empList);
+            if ($isEmp) {
+                $this->restoreEmpCheckoutState($empList);
+            }
+            $cartAmount = null;
 
             $candidates = array_unique(array_merge($empList, array_reverse($_SESSION['paytrail_transactions'] ?? [])));
             foreach ($candidates as $transactionId) {
@@ -2182,7 +2267,9 @@ class paytrail extends base
                 if (!in_array($status, ['ok', 'pending', 'delayed'], true)) {
                     continue;
                 }
-                $cartAmount = is_object($order) ? (int)round((float)$order->info['total'] * 100) : 0;
+                if ($cartAmount === null) {
+                    $cartAmount = $this->currentOrderTotalCents();
+                }
                 if ($cartAmount === (int)$row['amount']) {
                     $_SESSION['paytrail_recover_tried'][$transactionId] = true;
                     zen_redirect(zen_href_link(FILENAME_CHECKOUT_PROCESS, 'paytrail_tx=' . urlencode($transactionId), 'SSL', true, false));

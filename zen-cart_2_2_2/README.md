@@ -62,6 +62,8 @@ Before account activation use test mode if Okay call to Paytrail customer servic
   - Matched by Transaction ID and Paytrail's own amount (GET `/payments/{id}`), not by a recalculated cart (a rebuilt cart can give a different total because of shipping, fees or reward points).
   - Not done when the payment is less than 5 minutes old (the customer may still be returning to the store) or when Paytrail's amount differs from the saved amount.
   - The button asks for confirmation on payments without an order.
+- **Fix:** paid-payment recovery on the payment page compared the amount against `$order->info['total']` before the order total modules had run (Zen Cart calls `selection()` before `process()`), so coupons, gift vouchers, reward points and fees were missing and the amounts did not match (e.g. 33.40 vs 34.00 paid). The real total is now calculated with the order total modules (and everything is restored afterwards, so the totals box is not duplicated).
+- **Admin "Place Order" (Basket → place order as customer):** the checkout state of the original payment is restored into the session once: shipping method and cost, coupon (`cc_id`), gift voucher (`cot_gv`), reward points (`redeem_points`), comments and addresses. The order total is then the same as when the customer paid. (Works for payments saved with v5.8.1 or later.)
 
 ### v5.8.0 (2026-11-19)
 
