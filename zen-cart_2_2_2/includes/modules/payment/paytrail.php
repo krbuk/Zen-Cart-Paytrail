@@ -7,7 +7,7 @@
  * @copyright Portions Copyright 2003 osCommerce
  * @license   http://www.zen-cart.com/license/2_0.txt GNU Public License V2.0
  * @version $Id: piloujp 2025 Oct 10 Modified in v2.2.2 $
- * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2026 Nov 20 Modified in v5.8.1 (card tokenization, payments table, 30s status check)
+ * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2026 Nov 20 Modified in v5.8.2 (card tokenization, payments table, 30s status check)
  */
 
 // Paytrail module use vendors
@@ -120,7 +120,7 @@ class paytrail extends base
         /**
          *  For API module version
          */
-        public $moduleVersion = '5.8.1';      
+        public $moduleVersion = '5.8.2';      
         /**
          * $allowed_currencies is the valid Paytrail currency to use default EUR
          * @var string
@@ -2215,7 +2215,7 @@ class paytrail extends base
                 $restore  = $snapshot['full']['restore'] ?? null;
                 $_SESSION['paytrail_emp_restored'][$transactionId] = true;
                 if (!is_array($restore)) {
-                    continue; // payment saved before v5.8.1: only the basket is available
+                    continue; // payment saved before v5.8.2: only the basket is available
                 }
                 foreach (['shipping', 'cc_id', 'cot_gv', 'redeem_points', 'redeem_value', 'comments', 'sendto', 'billto'] as $key) {
                     if (array_key_exists($key, $restore) && $restore[$key] !== null && $restore[$key] !== '') {
