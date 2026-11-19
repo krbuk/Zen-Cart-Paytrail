@@ -1344,15 +1344,14 @@ class paytrail extends base
 				}
 
 				// Add reward points breakdown
-				if (array_key_exists('redeem_points', $_SESSION)) {
-					$redeemPoints = $_SESSION['redeem_points'];
-				} else {
-					$redeemPoints = 0; // Reward Point not aktif
-				}
+				// Reward points module: $_SESSION['redeem_points'] = number of points,
+				// $_SESSION['redeem_value'] = discount in EUR (points x ratio, deducted from the order total).
+				// Paytrail item prices are in cents -> use the EUR value x 100.
+				$redeemValue = (isset($_SESSION['redeem_value']) && is_numeric($_SESSION['redeem_value'])) ? (float)$_SESSION['redeem_value'] : 0; // Reward Point not aktif = 0
 
 				// Add reward points breakdown
-				if ($redeemPoints > 0) {
-				  $redem_value = number_format((float)$redeemPoints, 2, '.', '');
+				if ($redeemValue > 0) {
+				  $redem_value = (int)round($redeemValue * 100);
 				  // if tax is to be calculated on purchased GVs, calculate it
 				  $items[] = [
 					'title'     => MODULE_PAYMENT_PAYTRAIL_REWARD_POINT_TEXT,
@@ -1792,6 +1791,7 @@ class paytrail extends base
                     'cc_id'         => $_SESSION['cc_id'] ?? null,
                     'cot_gv'        => $_SESSION['cot_gv'] ?? null,
                     'redeem_points' => $_SESSION['redeem_points'] ?? null,
+                    'redeem_value'  => $_SESSION['redeem_value'] ?? null,
                     'comments'      => $_SESSION['comments'] ?? null,
                     'sendto'        => $_SESSION['sendto'] ?? null,
                     'billto'        => $_SESSION['billto'] ?? null,
@@ -2217,7 +2217,7 @@ class paytrail extends base
                 if (!is_array($restore)) {
                     continue; // payment saved before v5.8.1: only the basket is available
                 }
-                foreach (['shipping', 'cc_id', 'cot_gv', 'redeem_points', 'comments', 'sendto', 'billto'] as $key) {
+                foreach (['shipping', 'cc_id', 'cot_gv', 'redeem_points', 'redeem_value', 'comments', 'sendto', 'billto'] as $key) {
                     if (array_key_exists($key, $restore) && $restore[$key] !== null && $restore[$key] !== '') {
                         $_SESSION[$key] = $restore[$key];
                     } else {
