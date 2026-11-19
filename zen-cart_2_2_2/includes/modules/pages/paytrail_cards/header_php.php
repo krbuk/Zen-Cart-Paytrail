@@ -1,7 +1,7 @@
 <?php
 /**
  * My account: saved Paytrail cards (list, remove, add new card with Paytrail add card form).
- * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2026 Nov 14 v5.7.0
+ * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2026 Nov 19 v5.8.0
  */
 if (!zen_is_logged_in() || zen_in_guest_checkout()) {
     $_SESSION['navigation']->set_snapshot();

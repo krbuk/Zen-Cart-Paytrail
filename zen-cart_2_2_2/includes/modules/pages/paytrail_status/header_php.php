@@ -2,7 +2,7 @@
 /**
  * Paytrail payment status (AJAX) for the waiting page.
  * Only transactions created in the current customer session can be queried.
- * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2026 Nov 14 Modified in v5.7.0
+ * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2026 Nov 19 Modified in v5.8.0
  */
 require(DIR_WS_MODULES . zen_get_module_directory('require_languages.php'));
 require_once(DIR_WS_MODULES . 'payment/paytrail.php');

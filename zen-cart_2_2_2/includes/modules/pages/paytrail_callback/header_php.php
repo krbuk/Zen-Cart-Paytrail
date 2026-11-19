@@ -5,7 +5,7 @@
  * - Pending payments: final status (ok / fail) updates the order.
  * - Pay and add card: saves checkout-card-token for the customer whose id is signed into the url (cid + csig).
  * Always answers HTTP 200 so Paytrail does not retry a request that has been handled.
- * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2026 Nov 14 v5.7.0
+ * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2026 Nov 19 v5.8.0
  */
 require(DIR_WS_MODULES . zen_get_module_directory('require_languages.php'));
 require_once(DIR_WS_MODULES . 'payment/paytrail.php');

@@ -7,7 +7,7 @@
  * @copyright Portions Copyright 2003 osCommerce
  * @license   http://www.zen-cart.com/license/2_0.txt GNU Public License V2.0
  * @version $Id: piloujp 2025 Oct 10 Modified in v2.2.2 $
- * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2026 Nov 14 Modified in v5.7.0 (card tokenization, 30s status check)
+ * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2026 Nov 19 Modified in v5.8.0 (card tokenization, payments table, 30s status check)
  */
 
 // Paytrail module use vendors
@@ -120,7 +120,7 @@ class paytrail extends base
         /**
          *  For API module version
          */
-        public $moduleVersion = '5.7.0';      
+        public $moduleVersion = '5.8.0';      
         /**
          * $allowed_currencies is the valid Paytrail currency to use default EUR
          * @var string
@@ -439,6 +439,16 @@ class paytrail extends base
           $body   = $this->getBody();
           $result = $this->apiPost('/payments', $body);
 
+          /**
+          ** Error control (develop)
+          ** Erase " // " and check the sent request and the Paytrail response.
+          **/
+          // echo '<br>' .'HTTP status: ' .$result['code'] .' / HMAC ok: ' .($result['ok'] ? 'yes' : 'NO');
+          // echo '<br>' .'transactionId: ' .($result['data']->transactionId ?? '-');
+          // echo '<br>' .'Request ID: ' .$result['request_id'];
+          // echo '<br><pre>' .htmlspecialchars(json_encode(json_decode($result['raw']), JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE)) .'</pre>';
+          // echo '<br><pre>'; print_r(json_decode($body,true)); exit;
+
           if (!$result['ok'] || $result['code'] != 201) {
               return "</form>\n" . $this->apiErrorHtml($result);
           }
@@ -448,7 +458,7 @@ class paytrail extends base
           if (isset($decodedresponsebody->transactionId)) {
             $this->transactionId = $decodedresponsebody->transactionId;
             $this->rememberTransaction($this->transactionId);
-            $this->recordPayment($this->transactionId, 'payment');
+            $this->recordPayment($this->transactionId, 'payment', (string)($decodedresponsebody->reference ?? ''));
           }
           
           $provider_selection = MODULE_PAYMENT_PAYTRAIL_PAYMENT_PROVIDER;
@@ -721,7 +731,8 @@ class paytrail extends base
               }
               // Update order history
               $statusText = ($resultStatus === 'ok') ? MODULE_PAYMENT_PAYTRAIL_PAYMENT_OK : MODULE_PAYMENT_PAYTRAIL_PAYMENT_WAITING_ACTIVATION;
-              $commentString = zen_db_prepare_input(MODULE_PAYMENT_PAYTRAIL_TITLE_STATUS . $statusText . MODULE_PAYMENT_PAYTRAIL_PAYMENT_METHOD . $provider . " , " . MODULE_PAYMENT_PAYTRAIL_REFERENCE_NUMBER . $this->paymentResult['reference'] . " , Transaction ID: " . $this->paymentResult['transactionId'] . ".");
+              $viite = $this->paytrailReference($this->getPayment((string)$this->paymentResult['transactionId']), (string)$this->paymentResult['reference']);
+              $commentString = zen_db_prepare_input(MODULE_PAYMENT_PAYTRAIL_TITLE_STATUS . $statusText . MODULE_PAYMENT_PAYTRAIL_PAYMENT_METHOD . $provider . " , " . MODULE_PAYMENT_PAYTRAIL_REFERENCE_NUMBER . $viite . ".");
 
               // Paid amount differs from the order total (cart changed in another tab etc.)
               if (!empty($this->paymentResult['amount']) && (int)$this->paymentResult['amount'] !== (int)$this->amount) {
@@ -735,6 +746,14 @@ class paytrail extends base
 
               // Order <-> Paytrail transaction (callback updates, admin activation)
               $this->setPaymentStatus($this->paymentResult['transactionId'], $resultStatus, (string)$this->paymentResult['provider'], (int)$insert_id);
+
+              // Paytrail payments table: viite exactly as Paytrail returned it (checkout-reference)
+              if (!empty($this->paymentResult['reference'])) {
+                  $sql = "UPDATE " . $this->paymentsTable() . " SET reference = :ref WHERE transaction_id = :tx";
+                  $sql = $db->bindVars($sql, ':ref', substr((string)$this->paymentResult['reference'], 0, 32), 'string');
+                  $sql = $db->bindVars($sql, ':tx', (string)$this->paymentResult['transactionId'], 'string');
+                  $db->Execute($sql);
+              }
             }
 
             // Clean up the session
@@ -902,6 +921,12 @@ class paytrail extends base
           ];
 
           // token, own stamp, callback urls for pay-and-add-card etc.
+          // Shop-in-Shop: Paytrail rejects the whole request if manualInvoiceActivation is sent
+          // ("instance is not allowed to have the additional property manualInvoiceActivation")
+          if (!empty($this->shop_in_shop_merchant_id)) {
+            unset($body_request_data['manualInvoiceActivation']);
+          }
+
           foreach ($extra as $key => $value) {
             $body_request_data[$key] = $value;
           }
@@ -909,7 +934,10 @@ class paytrail extends base
           
           // The json_encoding process in your current code continues from here:
           $body = json_encode($body_request_data, JSON_UNESCAPED_SLASHES);
-			
+
+          // Testing and showing order items (develop): erase " // " to see the request sent to Paytrail
+          //echo '<pre>'; print_r(json_decode($body,true)); exit;
+
           return $body;
         }
 
@@ -1366,7 +1394,7 @@ class paytrail extends base
 
         /**   
         * ********************************  
-        *  Helpers  (since v5.7.0)
+        *  Helpers  (since v5.8.0)
         * ********************************	
         */ 
 
@@ -1420,10 +1448,10 @@ class paytrail extends base
 
             if (!$this->validateHmac($responseHeaders, $responseBody, $responseHeaders['signature'] ?? '', (string)$this->secretKey)) {
                 error_log('Paytrail API ' . $uri . ': response HMAC signature mismatch (HTTP ' . $response->getStatusCode() . ') ' . substr($responseBody, 0, 500));
-                return ['ok' => false, 'code' => $response->getStatusCode(), 'data' => json_decode($responseBody), 'raw' => $responseBody, 'hmac' => false];
+                return ['ok' => false, 'code' => $response->getStatusCode(), 'data' => json_decode($responseBody), 'raw' => $responseBody, 'hmac' => false, 'request_id' => $responseHeaders['request-id'] ?? ''];
             }
 
-            return ['ok' => true, 'code' => $response->getStatusCode(), 'data' => json_decode($responseBody), 'raw' => $responseBody];
+            return ['ok' => true, 'code' => $response->getStatusCode(), 'data' => json_decode($responseBody), 'raw' => $responseBody, 'request_id' => $responseHeaders['request-id'] ?? ''];
         }
 
         /**
@@ -1663,6 +1691,22 @@ class paytrail extends base
         protected function paymentsTable(): string
         {
             return DB_PREFIX . 'paytrail_payments';
+        }
+
+        /**
+         * Viitenumero to show: Paytrail's bank reference (POST /payments response "reference"),
+         * or our own reference (checkout-reference) when Paytrail did not return one
+         * (token charge / pay-and-add-card responses have no bank reference).
+         */
+        public function paytrailReference(?array $row, string $fallback = ''): string
+        {
+            // Kauppiaan viite (our reference, checkout-reference) everywhere - same number for
+            // all payment methods, easy to search and analyse. Paytrail's own bank reference is
+            // still saved in the bank_reference column.
+            if (is_array($row) && !empty($row['reference'])) {
+                return (string)$row['reference'];
+            }
+            return $fallback;
         }
 
         protected function pendingOrderStatusId(): int
@@ -1914,7 +1958,7 @@ class paytrail extends base
                 'updated_by' => $this->adminName(),
             ]);
             $statusText = ($row['status'] === 'ok') ? MODULE_PAYMENT_PAYTRAIL_PAYMENT_OK : MODULE_PAYMENT_PAYTRAIL_PAYMENT_WAITING_ACTIVATION;
-            zen_update_orders_history($ordersId, MODULE_PAYMENT_PAYTRAIL_ORDER_FROM_TABLE . "\n" . MODULE_PAYMENT_PAYTRAIL_TITLE_STATUS . $statusText . MODULE_PAYMENT_PAYTRAIL_PAYMENT_METHOD . $row['provider'] . ' , ' . MODULE_PAYMENT_PAYTRAIL_REFERENCE_NUMBER . $row['reference'] . ' , Transaction ID: ' . $row['transaction_id'], $this->adminName(), -1, 0);
+            zen_update_orders_history($ordersId, MODULE_PAYMENT_PAYTRAIL_ORDER_FROM_TABLE . "\n" . MODULE_PAYMENT_PAYTRAIL_TITLE_STATUS . $statusText . MODULE_PAYMENT_PAYTRAIL_PAYMENT_METHOD . $row['provider'] . ' , ' . MODULE_PAYMENT_PAYTRAIL_REFERENCE_NUMBER . $this->paytrailReference($row), $this->adminName(), -1, 0);
 
             $this->setPaymentStatus($row['transaction_id'], '', '', $ordersId);
 
@@ -1930,7 +1974,7 @@ class paytrail extends base
          * New payment created at Paytrail -> row with status "new".
          * $method: payment | pay_add_card | token
          */
-        protected function recordPayment(?string $transactionId, string $method = 'payment')
+        protected function recordPayment(?string $transactionId, string $method = 'payment', string $bankReference = '')
         {
             global $db, $order;
             if (empty($transactionId)) {
@@ -1941,12 +1985,13 @@ class paytrail extends base
             $name  = is_object($order) ? trim(($order->customer['firstname'] ?? '') . ' ' . ($order->customer['lastname'] ?? '')) : '';
 
             $sql = "INSERT INTO " . $this->paymentsTable() . "
-                    (transaction_id, stamp, reference, customers_id, customer_email, customer_name, orders_id, amount, currency, method, provider, status, cart_snapshot, session_id, admin_notified, date_added, last_modified)
-                    VALUES (:tx, :stamp, :ref, :cid, :email, :name, 0, :amount, 'EUR', :method, '', 'new', :snapshot, :sid, 0, now(), now())
+                    (transaction_id, stamp, reference, bank_reference, customers_id, customer_email, customer_name, orders_id, amount, currency, method, provider, status, cart_snapshot, session_id, admin_notified, date_added, last_modified)
+                    VALUES (:tx, :stamp, :ref, :bankref, :cid, :email, :name, 0, :amount, 'EUR', :method, '', 'new', :snapshot, :sid, 0, now(), now())
                     ON DUPLICATE KEY UPDATE last_modified = now()";
             $sql = $db->bindVars($sql, ':tx', $transactionId, 'string');
             $sql = $db->bindVars($sql, ':stamp', substr((string)$this->lastStamp, 0, 64), 'string');
             $sql = $db->bindVars($sql, ':ref', substr((string)$this->order_number, 0, 32), 'string');
+            $sql = $db->bindVars($sql, ':bankref', substr($bankReference, 0, 32), 'string');
             $sql = $db->bindVars($sql, ':cid', (int)($_SESSION['customer_id'] ?? 0), 'integer');
             $sql = $db->bindVars($sql, ':email', substr($email, 0, 96), 'string');
             $sql = $db->bindVars($sql, ':name', substr($name, 0, 128), 'string');
@@ -2063,7 +2108,7 @@ class paytrail extends base
             $lines[] = MODULE_PAYMENT_PAYTRAIL_NO_ORDER_INTRO;
             $lines[] = '';
             $lines[] = 'Transaction ID: ' . $row['transaction_id'];
-            $lines[] = MODULE_PAYMENT_PAYTRAIL_REFERENCE_NUMBER . $row['reference'];
+            $lines[] = MODULE_PAYMENT_PAYTRAIL_REFERENCE_NUMBER . $this->paytrailReference($row);
             $lines[] = MODULE_PAYMENT_PAYTRAIL_TITLE_STATUS . $row['status'] . '  /  ' . MODULE_PAYMENT_PAYTRAIL_PAYMENT_METHOD . $row['provider'];
             $lines[] = MODULE_PAYMENT_PAYTRAIL_NO_ORDER_AMOUNT . number_format($row['amount'] / 100, 2, ',', ' ') . ' ' . $row['currency'];
             $lines[] = MODULE_PAYMENT_PAYTRAIL_NO_ORDER_CUSTOMER . $row['customer_name'] . ' <' . $row['customer_email'] . '> (ID ' . (int)$row['customers_id'] . ')';
@@ -2093,7 +2138,7 @@ class paytrail extends base
 
             $text = implode("\n", $lines);
             if (function_exists('zen_mail')) {
-                zen_mail(STORE_NAME, STORE_OWNER_EMAIL_ADDRESS, MODULE_PAYMENT_PAYTRAIL_NO_ORDER_SUBJECT . ' ' . $row['reference'], $text, STORE_NAME, EMAIL_FROM, ['EMAIL_MESSAGE_HTML' => nl2br(zen_output_string_protected($text))], 'default');
+                zen_mail(STORE_NAME, STORE_OWNER_EMAIL_ADDRESS, MODULE_PAYMENT_PAYTRAIL_NO_ORDER_SUBJECT . ' ' . $this->paytrailReference($row), $text, STORE_NAME, EMAIL_FROM, ['EMAIL_MESSAGE_HTML' => nl2br(zen_output_string_protected($text))], 'default');
             }
             error_log('Paytrail: payment ' . $row['transaction_id'] . ' (' . $row['status'] . ') has no order - store owner notified');
         }
@@ -2141,14 +2186,14 @@ class paytrail extends base
                 // Admin as customer: tell why, can be retried (e.g. choose the same shipping method)
                 if ($isEmp && in_array($transactionId, $empList, true)) {
                     if (is_object($messageStack)) {
-                        $messageStack->add('checkout_payment', sprintf(MODULE_PAYMENT_PAYTRAIL_EMP_AMOUNT_DIFFERS, $row['reference'], number_format($row['amount'] / 100, 2, ',', ' '), number_format($cartAmount / 100, 2, ',', ' ')), 'caution');
+                        $messageStack->add('checkout_payment', sprintf(MODULE_PAYMENT_PAYTRAIL_EMP_AMOUNT_DIFFERS, $this->paytrailReference($row), number_format($row['amount'] / 100, 2, ',', ' '), number_format($cartAmount / 100, 2, ',', ' ')), 'caution');
                     }
                     continue;
                 }
                 $_SESSION['paytrail_recover_tried'][$transactionId] = true;
                 // Cart changed after the payment: do not create a wrong order automatically
                 if (is_object($messageStack)) {
-                    $messageStack->add('checkout_payment', sprintf(MODULE_PAYMENT_PAYTRAIL_PAID_CART_CHANGED, $row['reference']), 'caution');
+                    $messageStack->add('checkout_payment', sprintf(MODULE_PAYMENT_PAYTRAIL_PAID_CART_CHANGED, $this->paytrailReference($row)), 'caution');
                 }
                 if ((int)$row['admin_notified'] === 0) {
                     $this->notifyPaidWithoutOrder($row);
@@ -2170,6 +2215,7 @@ class paytrail extends base
             $html .= '<strong>Paytrail</strong> &nbsp; Transaction ID: ' . zen_output_string_protected($row['transaction_id'])
                    . ' &nbsp; ' . MODULE_PAYMENT_PAYTRAIL_TITLE_STATUS . '<b>' . zen_output_string_protected($row['status']) . '</b>'
                    . ($row['provider'] !== '' ? ' &nbsp; (' . zen_output_string_protected($row['provider']) . ')' : '')
+                   . ' &nbsp; ' . MODULE_PAYMENT_PAYTRAIL_REFERENCE_NUMBER . zen_output_string_protected($this->paytrailReference($row))
                    . ' &nbsp; ' . number_format($row['amount'] / 100, 2, ',', ' ') . ' ' . zen_output_string_protected($row['currency']);
 
             if (in_array($row['status'], ['pending', 'delayed'], true)) {
@@ -2286,6 +2332,7 @@ class paytrail extends base
                 transaction_id varchar(64) NOT NULL,
                 stamp varchar(64) NOT NULL DEFAULT '',
                 reference varchar(32) NOT NULL DEFAULT '',
+                bank_reference varchar(32) NOT NULL DEFAULT '',
                 customers_id int(11) NOT NULL DEFAULT 0,
                 customer_email varchar(96) NOT NULL DEFAULT '',
                 customer_name varchar(128) NOT NULL DEFAULT '',
@@ -2307,6 +2354,11 @@ class paytrail extends base
                 KEY idx_orders_id (orders_id),
                 KEY idx_status (status, orders_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            // v5.8.0 upgrade: Paytrail bank reference column (tables created before it existed)
+            $col = $db->Execute("SHOW COLUMNS FROM " . DB_PREFIX . "paytrail_payments LIKE 'bank_reference'");
+            if ($col->EOF) {
+                $db->Execute("ALTER TABLE " . DB_PREFIX . "paytrail_payments ADD bank_reference varchar(32) NOT NULL DEFAULT '' AFTER reference");
+            }
             $done = true;
         }
 

@@ -21,7 +21,7 @@ $define = [
 	'MODULE_PAYMENT_PAYTRAIL_SELECET_PAYMENT' => 'Choose payment method',
 	'MODULE_PAYMENT_PAYTRAIL_TITLE_STATUS' => 'Payment status: ', 
 	'MODULE_PAYMENT_PAYTRAIL_PAYMENT_METHOD' => 'Payment method: ',
-	'MODULE_PAYMENT_PAYTRAIL_REFERENCE_NUMBER' => 'Reference Number: ',
+	'MODULE_PAYMENT_PAYTRAIL_REFERENCE_NUMBER' => 'Merchant reference: ',
 	'MODULE_PAYMENT_PAYTRAIL_PAYMENT_ERROR' => 'ERROR ! Paytrail online payment service does not respond.',
 	'MODULE_PAYMENT_PAYTRAIL_SELECET_OTHER' => 'Click the back button and choose another payment method',
 	// Payment information
@@ -44,7 +44,7 @@ $define = [
 	'MODULE_PAYMENT_PAYTRAIL_RETURN_PAYMENT_FAIL' => 'Payment failed.',		
 	'MODULE_PAYMENT_PAYTRAIL_RETURN_PAYMENT_FAIL_INFO' => 'The payment process could not be completed. <br>Please try another payment option.',
 	'MODULE_PAYMENT_PAYTRAIL_RETURN_PAYMENT_SELECT_BUTTON' => 'choose another payment method',	
-	// Saved cards (tokenization) v5.7.0
+	// Saved cards (tokenization) v5.8.0
 	'MODULE_PAYMENT_PAYTRAIL_CARD_OTHER_METHOD' => 'Pay with another payment method (bank, mobile, card)',
 	'MODULE_PAYMENT_PAYTRAIL_CARD_PAY_WITH' => 'Pay with saved card',
 	'MODULE_PAYMENT_PAYTRAIL_CARD_SAVE_NEW' => 'Pay by card and save the card for future purchases',

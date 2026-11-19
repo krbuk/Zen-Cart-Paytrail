@@ -2,7 +2,7 @@
 /**
  * Admin: Customers -> Paytrail Payments
  * Paytrail payments table (transactionId <-> customer <-> order): check again, create order (last resort).
- * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2026 Nov 14 v5.7.0
+ * @version $Id: Nida Verkkopalvelu (www.nida.fi) / krbuk 2026 Nov 19 v5.8.0
  */
 require('includes/application_top.php');
 
@@ -134,7 +134,7 @@ if ($paytrail !== null) {
     }
     if ($search !== '') {
         $like = "'%" . zen_db_input($search) . "%'";
-        $where[] = "(transaction_id LIKE $like OR reference LIKE $like OR customer_email LIKE $like OR customer_name LIKE $like" . (ctype_digit($search) ? " OR orders_id = " . (int)$search : "") . ")";
+        $where[] = "(transaction_id LIKE $like OR reference LIKE $like OR bank_reference LIKE $like OR customer_email LIKE $like OR customer_name LIKE $like" . (ctype_digit($search) ? " OR orders_id = " . (int)$search : "") . ")";
     }
     $sql = "SELECT * FROM " . $table . ($where ? " WHERE " . implode(' AND ', $where) : "") . " ORDER BY id DESC LIMIT 200";
     $result = $db->Execute($sql);
@@ -200,7 +200,8 @@ $statusColors = ['ok' => 'success', 'pending' => 'warning', 'delayed' => 'warnin
               <td class="dataTableContent"><?php echo zen_output_string_protected($row['date_added']); ?></td>
               <td class="dataTableContent">
                 <small><?php echo zen_output_string_protected($row['transaction_id']); ?></small><br>
-                <?php echo zen_output_string_protected($row['reference']); ?> &middot; <small><?php echo zen_output_string_protected($row['method']); ?></small>
+                <b><?php echo zen_output_string_protected($row['reference']); ?></b>
+                &middot; <small><?php echo zen_output_string_protected($row['method']); ?></small>
               </td>
               <td class="dataTableContent">
                 <?php if ((int)$row['customers_id'] > 0) { ?>
